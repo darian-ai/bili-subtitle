@@ -111,6 +111,29 @@ def test_auth_login_reports_success() -> None:
     assert "已经登录" in result.output
 
 
+def test_auth_login_maps_terminal_failure_to_operation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def expired(*args: object, **kwargs: object) -> AuthOutcome:
+        return AuthOutcome(LoginState.EXPIRED, "二维码已过期。")
+
+    monkeypatch.setattr(cli, "login", expired)
+    result = runner.invoke(cli.auth_app, ["login"])
+    assert result.exit_code == 2
+    assert "二维码已过期" in result.stderr
+
+
+def test_auth_login_handles_ctrl_c_without_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def interrupt(*args: object, **kwargs: object) -> AuthOutcome:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "login", interrupt)
+    result = runner.invoke(cli.auth_app, ["login"])
+    assert result.exit_code == 2
+    assert "登录已取消" in result.stderr
+    assert "Traceback" not in result.output
+
+
 @pytest.mark.parametrize(
     ("read", "expected"),
     [
