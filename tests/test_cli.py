@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from collections.abc import Callable
+from io import BytesIO, TextIOWrapper
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -267,3 +271,54 @@ def test_main_dispatches_auth_arguments(
     cli.main()
 
     assert received == [("bili-subtitle auth", ["status"])]
+
+
+def test_main_reconfigures_non_utf8_standard_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stdout_bytes = BytesIO()
+    stderr_bytes = BytesIO()
+    stdout = TextIOWrapper(stdout_bytes, encoding="cp1252")
+    stderr = TextIOWrapper(stderr_bytes, encoding="cp1252")
+
+    def fake_app(*, prog_name: str, args: list[str]) -> None:
+        del prog_name, args
+        print("中文帮助")
+        print("中文错误", file=sys.stderr)
+
+    monkeypatch.setattr(cli, "extract_app", fake_app)
+    monkeypatch.setattr(sys, "argv", ["bili-subtitle", "--help"])
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    cli.main()
+    stdout.flush()
+    stderr.flush()
+
+    assert stdout_bytes.getvalue().decode("utf-8").splitlines() == ["中文帮助"]
+    assert stderr_bytes.getvalue().decode("utf-8").splitlines() == ["中文错误"]
+
+
+def test_help_survives_cp1252_fresh_process() -> None:
+    command = (
+        "import io, sys; "
+        "sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='cp1252'); "
+        "sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='cp1252'); "
+        "from bili_subtitle.cli import main; "
+        "sys.argv = ['bili-subtitle', '--help']; main()"
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+
+    result = subprocess.run(
+        [sys.executable, "-c", command],
+        cwd=Path(__file__).parents[1],
+        env=environment,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    output = result.stdout.decode("utf-8")
+    assert "提取一个普通 UGC 投稿" in output
+    assert "认证命令" in output

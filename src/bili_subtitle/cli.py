@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated
 
@@ -202,8 +203,16 @@ def auth_clear() -> None:
 
 def main() -> None:
     """将公开命令语法分派给对应的 Typer 应用。"""
+    _configure_standard_streams()
     args = sys.argv[1:]
     if args and args[0] == "auth":
         auth_app(prog_name="bili-subtitle auth", args=args[1:])
         return
     extract_app(prog_name="bili-subtitle", args=args)
+
+
+def _configure_standard_streams() -> None:
+    """让 Windows 控制台与重定向输出可靠承载公开的中文界面。"""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")

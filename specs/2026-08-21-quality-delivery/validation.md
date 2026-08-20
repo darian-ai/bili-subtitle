@@ -178,6 +178,21 @@ CI 链接。不得记录账号、Cookie、二维码、签名 URL、请求头、�
 - 使用真实普通多分集 UGC 投稿验证默认全部、`--page N`、重复跳过、`--force`、身份、摘要及退出码。
 - 在待合并提交上取得扩展后的 Windows CI 成功 run，并补充链接和提交哈希。
 
+### 2026-08-21 Windows 隔离入口编码修复
+
+- Windows Quality run `32412642906` 的测试、Ruff、Pyright、构建、归档校验均通过；隔离
+  `uv tool install` 成功，但仓库外的新 Windows PowerShell 调用 `bili-subtitle --help`
+  时，Python stdout 采用 cp1252，中文帮助触发 `UnicodeEncodeError`，隔离入口门禁失败。
+- 控制台入口现在于 Typer 输出前将标准输出和标准错误的 `TextIOWrapper` 重新配置为 UTF-8，
+  并以 `backslashreplace` 兜底不可编码的异常字符；公开中文帮助和运行输出仍输出真实 UTF-8，
+  不删除、不静默或替换中文界面。
+- `test_main_reconfigures_non_utf8_standard_streams` 以 cp1252 风格的 stdout/stderr 验证两路
+  中文输出均成为可解码 UTF-8；`test_help_survives_cp1252_fresh_process` 在 fresh Python 子进程
+  中将两路流预置为 cp1252，再运行完整 `--help`，验证退出码 `0` 且中文帮助完整。
+- 修复后本地 CPython 3.12.13 全量 193 项测试通过，总覆盖率 91.93%；Ruff lint、Ruff
+  format check、strict Pyright 和 `git diff --check` 均返回 `0`。待合并提交的 Windows CI
+  成功 run 仍待补，不得据此声明阶段六完成。
+
 ## 2026-08-21 独立复核与加固记录
 
 - 独立复核在提交 `dca9835e2db26a4ed1b7117d5004b989298ecaa9` 上补充默认网络封锁；任何未由替身接管的 socket 连接都会使 pytest 立即失败。全量 191 项测试通过，分支覆盖率 91.94%。
