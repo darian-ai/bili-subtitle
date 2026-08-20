@@ -20,8 +20,10 @@
 | Windows Credential Manager 专用测试槽位 | 通过：在本机 Windows 上使用独立 service `bili-subtitle-phase3-validation` 与 account `codex-dedicated-test-slot`，完成无值 → 写入 → 读取等值 → 删除 → 无值；`finally` 清理通过 |
 | 默认凭据隔离 | 通过：验收未读取或覆盖默认槽位，记录中未包含秘密 |
 | Windows GitHub Actions | 通过：[Quality run 32398440533](https://github.com/darian-ai/bili-subtitle/actions/runs/32398440533) 在提交 `234c3ed` 上完成，`sync`、测试、Ruff lint、Ruff format 与 Pyright 全部通过 |
+| 真实账号二维码登录 | 通过：2026-08-21 在本机 Windows 终端执行 `uv run bili-subtitle auth login`，使用哔哩哔哩客户端扫码并确认后，命令明确报告登录成功；记录未包含账号标识、Cookie、二维码或响应正文 |
+| 跨命令凭据复用 | 通过：登录后执行 `uv run bili-subtitle auth status`，命令明确报告已登录，证明保存的凭据可由后续命令复用；记录未包含账号标识或秘密 |
 
-未执行项：真实账号扫码，以及二维码过期和取消的人工流程。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
+未执行项：主命令复用或自动恢复、二维码过期、用户取消以及默认凭据 `auth clear` 的人工流程。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
 
 ## 自动化验证
 
