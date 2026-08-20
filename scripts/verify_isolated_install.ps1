@@ -2,6 +2,8 @@ param([Parameter(Mandatory = $true)][string]$Wheel)
 
 $ErrorActionPreference = "Stop"
 $wheelPath = (Resolve-Path -LiteralPath $Wheel).Path
+$originalToolDir = [Environment]::GetEnvironmentVariable("UV_TOOL_DIR", "Process")
+$originalBinDir = [Environment]::GetEnvironmentVariable("UV_TOOL_BIN_DIR", "Process")
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("bili-subtitle-install-" + [guid]::NewGuid().ToString("N"))
 $resolvedTempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $resolvedRoot = [System.IO.Path]::GetFullPath($temporaryRoot)
@@ -23,8 +25,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "fresh PowerShell invocation failed" }
 }
 finally {
-    Remove-Item Env:UV_TOOL_DIR -ErrorAction SilentlyContinue
-    Remove-Item Env:UV_TOOL_BIN_DIR -ErrorAction SilentlyContinue
+    [Environment]::SetEnvironmentVariable("UV_TOOL_DIR", $originalToolDir, "Process")
+    [Environment]::SetEnvironmentVariable("UV_TOOL_BIN_DIR", $originalBinDir, "Process")
     if (Test-Path -LiteralPath $resolvedRoot) {
         Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
     }
