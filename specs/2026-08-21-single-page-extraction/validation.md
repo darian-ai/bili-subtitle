@@ -146,3 +146,16 @@ uv run pyright
   未发现媒体下载、ASR、OCR、翻译、WBI、私有接口或访问控制绕过；公开 CLI 行为未改变，
   未提前加入阶段五编排参数与策略。
 - 待验收：推送 feature 分支后运行 Windows GitHub Actions；不得在本记录伪造 CI 结果。
+
+## 2026-08-21 独立复核记录
+
+- 修复签名 URL 在两次公开调用之间驻留于适配器实例、私有 `repr` 可显示 URL，及 JSON
+  解析异常上下文可能携带正文的问题；下载入口重新取得短生命周期地址后立即消费。
+- 补齐任一已有目标的发布前统一拒绝、输出准备失败的 `ExportError` 分类、临时文件创建与
+  刷新故障清理，以及真实适配器到 JSON/SRT/manifest 的离线 AI 字幕闭环测试。
+- `uv sync --locked --dev`：通过；`uv run pytest`：158 passed，覆盖率 93.43%。
+- `uv run ruff check .`、`uv run ruff format --check .`、`uv run pyright`、
+  `git diff --check`：全部通过；Pyright 为 0 errors。
+- 独立范围审计确认未接入阶段五的字幕多分集/多轨道循环、语言过滤、覆盖策略或退出码聚合，
+  未发现媒体下载、ASR、OCR、翻译、私有接口或访问控制绕过实现。
+- 唯一剩余合并门禁仍为待合并提交上的 Windows GitHub Actions；本地记录不替代 CI。
