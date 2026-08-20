@@ -14,7 +14,7 @@ from bili_subtitle.infrastructure.subtitles import SubtitleBody
 
 
 def render_srt(cues: tuple[SubtitleCue, ...]) -> str:
-    blocks = []
+    blocks: list[str] = []
     for number, cue in enumerate(cues, 1):
         blocks.append(f"{number}\n{_timestamp(cue.start)} --> {_timestamp(cue.end)}\n{cue.text}\n")
     return "\n".join(blocks)

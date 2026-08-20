@@ -22,7 +22,7 @@ from bili_subtitle.domain.errors import (
 from bili_subtitle.domain.models import SubtitleCue, SubtitleTrack, SubtitleTrackKind
 
 _PLAYER_API = "https://api.bilibili.com/x/player/v2"
-_TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com")
+_TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com", ".hdslb.com")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +93,9 @@ class BilibiliSubtitleAdapter:
         cues = tuple(_parse_cue(item) for item in cast(list[object], body))
         return SubtitleBody(raw, cues)
 
-    def _get(self, url: str, **kwargs: object) -> httpx.Response:
+    def _get(self, url: str, *, params: dict[str, str | int] | None = None) -> httpx.Response:
         try:
-            response = self._client.get(url, **kwargs)
+            response = self._client.get(url, params=params)
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise SubtitleNetworkError("字幕网络访问失败。") from exc
         if response.status_code == 401:

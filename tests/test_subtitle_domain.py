@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from bili_subtitle.domain.errors import PlatformResponseError
+from bili_subtitle.domain.errors import SubtitlePlatformResponseError
 from bili_subtitle.domain.models import SubtitleCue, SubtitleTrack, SubtitleTrackKind
 
 
@@ -18,5 +18,5 @@ def test_subtitle_models_are_immutable_and_preserve_text() -> None:
 
 @pytest.mark.parametrize("value", [Decimal("NaN"), Decimal("Infinity"), Decimal("-1")])
 def test_cue_rejects_invalid_time(value: Decimal) -> None:
-    with pytest.raises(PlatformResponseError):
+    with pytest.raises(SubtitlePlatformResponseError):
         SubtitleCue(value, Decimal("2"), "x")

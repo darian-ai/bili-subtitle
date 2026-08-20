@@ -1,5 +1,6 @@
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,7 @@ def test_srt_round_half_up_and_preserves_order_and_text() -> None:
     )
 
 
-def test_export_preserves_raw_json_and_publishes_manifest_last(tmp_path) -> None:
+def test_export_preserves_raw_json_and_publishes_manifest_last(tmp_path: Path) -> None:
     page = VideoPage(1, 88, "P标题")
     video = VideoMetadata(7, "BV1xx411c7mD", "视频", (page,))
     track = SubtitleTrack(9, "zh-CN", "中文AI", SubtitleTrackKind.AI)
@@ -45,7 +46,7 @@ def test_export_preserves_raw_json_and_publishes_manifest_last(tmp_path) -> None
     assert not list(tmp_path.glob("*.tmp"))
 
 
-def test_existing_target_is_not_overwritten_and_temp_is_cleaned(tmp_path) -> None:
+def test_existing_target_is_not_overwritten_and_temp_is_cleaned(tmp_path: Path) -> None:
     target = tmp_path / "x.json"
     target.write_bytes(b"old")
     page = VideoPage(1, 88, "p")

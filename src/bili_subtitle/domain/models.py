@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 
-from bili_subtitle.domain.errors import PlatformResponseError
+from bili_subtitle.domain.errors import PlatformResponseError, SubtitlePlatformResponseError
 
 _BVID_PATTERN = re.compile(r"BV[A-Za-z0-9]{10}\Z")
 
@@ -80,7 +80,7 @@ class SubtitleTrack:
             or not self.language
             or not self.display_name
         ):
-            raise PlatformResponseError("平台返回了无效的字幕轨道。")
+            raise SubtitlePlatformResponseError("平台返回了无效的字幕轨道。")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,4 +96,4 @@ class SubtitleCue:
             or self.start < 0
             or self.end < self.start
         ):
-            raise PlatformResponseError("平台返回了无效的字幕时间。")
+            raise SubtitlePlatformResponseError("平台返回了无效的字幕时间。")
