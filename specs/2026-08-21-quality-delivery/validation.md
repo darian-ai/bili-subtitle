@@ -189,9 +189,11 @@ CI 链接。不得记录账号、Cookie、二维码、签名 URL、请求头、�
 - `test_main_reconfigures_non_utf8_standard_streams` 以 cp1252 风格的 stdout/stderr 验证两路
   中文输出均成为可解码 UTF-8；`test_help_survives_cp1252_fresh_process` 在 fresh Python 子进程
   中将两路流预置为 cp1252，再运行完整 `--help`，验证退出码 `0` 且中文帮助完整。
-- 修复后本地 CPython 3.12.13 全量 193 项测试通过，总覆盖率 91.93%；Ruff lint、Ruff
-  format check、strict Pyright 和 `git diff --check` 均返回 `0`。待合并提交的 Windows CI
-  成功 run 仍待补，不得据此声明阶段六完成。
+- 修复提交 `93e5bd2e1bffb1200f160cbdace5a9a4f4ad1c2f` 在本地 CPython 3.12.13
+  全量 193 项测试通过，总覆盖率 91.93%；Ruff lint、Ruff format check、strict Pyright、
+  `git diff --check`、源码构建、归档与 sdist 重建校验、隔离工具安装均返回 `0`。
+- Windows Quality run `32412977382` 在同一修复提交上成功；测试、Ruff、Pyright、构建、
+  归档校验及仓库外新 PowerShell 的隔离 `uv tool install`/中文帮助调用全部通过。
 
 ## 2026-08-21 独立复核与加固记录
 
