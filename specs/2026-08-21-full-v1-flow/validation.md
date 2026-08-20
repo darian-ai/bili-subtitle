@@ -138,3 +138,14 @@ git diff --check
 ## 验证记录约束
 
 实现阶段只可追加环境、命令、测试数量、覆盖率、脱敏场景状态与 CI 链接。不得记录真实账号、Cookie、二维码、签名 URL、请求头或平台响应正文，也不得在阶段五伪造阶段六真实人工验收结果。
+
+## 本地验证记录
+
+- 环境：Windows，Python 3.14（项目契约为 Python 3.12+），uv 锁定环境。
+- `uv run pytest -q`：164 项通过，分支覆盖率 91.62%。
+- `uv run ruff check .`：通过。
+- `uv run ruff format --check .`：通过。
+- `uv run pyright`：0 errors。
+- `git diff --check`：通过。
+- 脱敏固定响应覆盖多分集、重复语言过滤、同语言多轨道、无字幕、无匹配、全跳过、缺失补齐、强制覆盖、轨道失败隔离、manifest 失败和退出码聚合。
+- Windows GitHub Actions：尚未推送，待合并提交 CI 验收，不记录为通过。

@@ -165,6 +165,8 @@ def run_extraction(
             )
         except Exception:
             manifest_failed = True
+    else:
+        manifest_failed = True
     return FlowResult(tuple(page_results), manifest_failed)
 
 
