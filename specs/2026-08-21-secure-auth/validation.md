@@ -22,8 +22,9 @@
 | Windows GitHub Actions | 通过：[Quality run 32398440533](https://github.com/darian-ai/bili-subtitle/actions/runs/32398440533) 在提交 `234c3ed` 上完成，`sync`、测试、Ruff lint、Ruff format 与 Pyright 全部通过 |
 | 真实账号二维码登录 | 通过：2026-08-21 在本机 Windows 终端执行 `uv run bili-subtitle auth login`，使用哔哩哔哩客户端扫码并确认后，命令明确报告登录成功；记录未包含账号标识、Cookie、二维码或响应正文 |
 | 跨命令凭据复用 | 通过：登录后执行 `uv run bili-subtitle auth status`，命令明确报告已登录，证明保存的凭据可由后续命令复用；记录未包含账号标识或秘密 |
+| 主命令复用有效凭据 | 通过：在现有有效凭据下执行 `uv run bili-subtitle BV1xx411c7mD --page 1`，命令返回 `0` 并输出投稿及 P01 的正常元数据摘要；未再次显示二维码，且未创建字幕输出。记录未包含视频标题、账号标识、Cookie、二维码或响应正文 |
 
-未执行项：主命令复用或自动恢复、二维码过期、用户取消以及默认凭据 `auth clear` 的人工流程。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
+未执行项：无凭据或失效凭据时扫码后自动恢复原命令、二维码过期、用户取消以及默认凭据 `auth clear` 的人工流程。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
 
 ## 自动化验证
 
