@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import httpx
@@ -63,6 +64,11 @@ class FakeAuth:
 
     def poll(self, key: str) -> PollResult:
         return self.states.pop(0)
+
+
+class FailingStore(MemoryStore):
+    def save(self, credential: SessionCredential) -> None:
+        raise CredentialStoreError("无法安全保存凭据。")
 
 
 def test_credential_roundtrip_and_secret_repr() -> None:
@@ -142,6 +148,78 @@ def test_login_times_out_with_fake_clock() -> None:
     assert "超时" in result.message
 
 
+def test_login_retries_transient_network_errors_within_limit() -> None:
+    credential = SessionCredential(COOKIE)
+
+    class TransientAuth(FakeAuth):
+        calls = 0
+
+        def poll(self, key: str) -> PollResult:
+            self.calls += 1
+            if self.calls <= 2:
+                raise NetworkError("temporary")
+            return PollResult(LoginState.SUCCESS, credential)
+
+    auth = TransientAuth([])
+    waits: list[float] = []
+    result = login(
+        MemoryStore(), auth, lambda _: None, lambda _: None, wait=waits.append, retries=2
+    )
+    assert result.state is LoginState.SUCCESS
+    assert auth.calls == 3
+    assert waits == [2, 2]
+
+
+def test_login_stops_after_transient_network_retry_limit() -> None:
+    class OfflineAuth(FakeAuth):
+        calls = 0
+
+        def poll(self, key: str) -> PollResult:
+            self.calls += 1
+            raise NetworkError("temporary")
+
+    auth = OfflineAuth([])
+    with pytest.raises(NetworkError, match="temporary"):
+        login(MemoryStore(), auth, lambda _: None, lambda _: None, wait=lambda _: None, retries=2)
+    assert auth.calls == 3
+
+
+def test_login_network_retries_remain_bounded_by_total_timeout() -> None:
+    class OfflineAuth(FakeAuth):
+        calls = 0
+
+        def poll(self, key: str) -> PollResult:
+            self.calls += 1
+            raise NetworkError("temporary")
+
+    ticks = iter([0.0, 0.0, 2.0])
+    auth = OfflineAuth([])
+    result = login(
+        MemoryStore(),
+        auth,
+        lambda _: None,
+        lambda _: None,
+        timeout=1,
+        clock=lambda: next(ticks),
+        wait=lambda _: None,
+        retries=10,
+    )
+    assert "超时" in result.message
+    assert auth.calls == 1
+
+
+def test_login_save_failure_is_not_reported_as_success() -> None:
+    credential = SessionCredential(COOKIE)
+    with pytest.raises(CredentialStoreError, match="无法安全保存"):
+        login(
+            FailingStore(),
+            FakeAuth([PollResult(LoginState.SUCCESS, credential)]),
+            lambda _: None,
+            lambda _: None,
+            wait=lambda _: None,
+        )
+
+
 @respx.mock
 def test_adapter_check_generate_poll_and_apply() -> None:
     respx.get("https://api.bilibili.com/x/web-interface/nav").mock(
@@ -164,6 +242,26 @@ def test_adapter_check_generate_poll_and_apply() -> None:
         assert adapter.poll("fake-key").state is LoginState.UNSCANNED
         adapter.apply(SessionCredential(COOKIE))
         assert client.cookies["SESSDATA"] == "fake-session"
+
+
+def test_adapter_check_scopes_cookies_without_httpx_deprecation_warning() -> None:
+    seen_cookie_headers: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_cookie_headers.append(request.headers.get("cookie", ""))
+        return httpx.Response(200, json={"code": 0, "data": {"isLogin": True}})
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler), cookies={"existing": "kept"}
+    ) as client:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            status = BilibiliAuthAdapter(client).check(SessionCredential(COOKIE))
+        assert not caught
+        assert status.state is LoginState.VALID
+        assert "SESSDATA=fake-session" in seen_cookie_headers[0]
+        assert client.cookies.get("existing") == "kept"
+        assert client.cookies.get("SESSDATA") is None
 
 
 @pytest.mark.parametrize(

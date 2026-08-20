@@ -27,7 +27,16 @@ class BilibiliAuthAdapter:
         self._client = client
 
     def check(self, credential: SessionCredential) -> LoginStatus:
-        response = self._get(_NAV, cookies=dict(credential.cookies))
+        # HTTPX is deprecating per-request cookies because their persistence
+        # semantics are surprising.  Scope the credential to this check on the
+        # shared client, then restore its original cookie jar so an invalid old
+        # session cannot bleed into the subsequent QR-login flow.
+        original_cookies = httpx.Cookies(self._client.cookies)
+        try:
+            self._client.cookies.update(dict(credential.cookies))
+            response = self._get(_NAV)
+        finally:
+            self._client.cookies = original_cookies
         payload = _payload(response)
         if payload.get("code") != 0:
             return LoginStatus(LoginState.INVALID)
@@ -89,10 +98,9 @@ class BilibiliAuthAdapter:
         url: str,
         *,
         params: dict[str, str] | None = None,
-        cookies: dict[str, str] | None = None,
     ) -> httpx.Response:
         try:
-            response = self._client.get(url, params=params, cookies=cookies)
+            response = self._client.get(url, params=params)
             response.raise_for_status()
             return response
         except httpx.HTTPError as exc:
