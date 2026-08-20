@@ -7,6 +7,10 @@ from typing import Annotated
 
 import typer
 
+from bili_subtitle.application.metadata import resolve_selection
+from bili_subtitle.domain import MetadataError
+from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, create_http_client
+
 _NOT_IMPLEMENTED = "该功能尚未实现；当前版本仅提供阶段一项目骨架。"
 
 extract_app = typer.Typer(
@@ -56,11 +60,38 @@ def extract(
     ] = False,
 ) -> None:
     """提取一个普通 UGC 投稿的站内字幕。"""
-    del page, all_pages, lang, force
+    del lang, force
     if video is None:
         typer.echo(ctx.get_help())
         return
-    _not_implemented()
+    if page is not None and all_pages:
+        raise typer.BadParameter("--page 与 --all-pages 不能同时使用。")
+
+    try:
+        with create_http_client() as client:
+            selection = resolve_selection(
+                video,
+                page=page,
+                all_pages=all_pages,
+                metadata=BilibiliMetadataAdapter(client),
+            )
+    except MetadataError as exc:
+        typer.echo(f"错误：{exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    for notice in selection.notices:
+        typer.echo(notice)
+    typer.echo(f"标题：{_terminal_safe(selection.video.title)}")
+    typer.echo(f"BV号：{selection.video.bvid}")
+    typer.echo(f"av号：av{selection.video.aid}")
+    typer.echo(f"所选分集：{len(selection.pages)}")
+    for item in selection.pages:
+        typer.echo(f"P{item.number:02d} | CID {item.cid} | {_terminal_safe(item.title)}")
+
+
+def _terminal_safe(value: str) -> str:
+    """防止不可信平台标题伪造额外终端行或控制序列。"""
+    return "".join(character if character.isprintable() else " " for character in value)
 
 
 @auth_app.command("login")
