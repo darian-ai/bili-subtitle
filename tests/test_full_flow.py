@@ -6,6 +6,7 @@ import pytest
 import bili_subtitle.application.full_flow as flow_module
 import bili_subtitle.infrastructure.export as export_module
 from bili_subtitle.application.full_flow import run_extraction
+from bili_subtitle.domain.errors import ExportError
 from bili_subtitle.domain.models import (
     PageSelection,
     SelectionSource,
@@ -42,6 +43,85 @@ def test_path_planner_is_windows_safe_unique_and_bounded(tmp_path: Path) -> None
         len(str(path.resolve())) + 40 <= 240 for p in plans for path in (p.json_path, p.srt_path)
     )
     assert all(not any(char in p.basename for char in '<>:"/\\|?*') for p in plans)
+
+
+def _directory_with_resolved_length(base: Path, length: int) -> Path:
+    missing = length - len(str(base.resolve())) - 1
+    if missing < 1:
+        pytest.skip("pytest temporary root is already beyond the requested boundary")
+    result = base / ("d" * missing)
+    assert len(str(result.resolve())) == length
+    return result
+
+
+def _long_cwd_boundary(tmp_path: Path) -> tuple[Path, Path]:
+    page = VideoPage(1, 1, "p" * 200)
+    video = VideoMetadata(1, "BV1xx411c7mD", "v" * 200, (page,))
+    track = SubtitleTrack(7, "en-US", "English", SubtitleTrackKind.HUMAN)
+    last_success: Path | None = None
+    for length in range(len(str(tmp_path.parent.resolve())) + 2, 200):
+        candidate = _directory_with_resolved_length(tmp_path.parent, length)
+        try:
+            plan_output_paths(cwd=candidate, video=video, page=page, tracks=(track,))
+        except ExportError:
+            assert last_success is not None
+            return last_success, candidate
+        last_success = candidate
+    pytest.fail("path planner did not enforce its 240-character boundary")
+
+
+def test_path_planner_accepts_long_cwd_at_exact_temporary_budget(tmp_path: Path) -> None:
+    cwd, _ = _long_cwd_boundary(tmp_path)
+    page = VideoPage(1, 1, "p" * 200)
+    video = VideoMetadata(1, "BV1xx411c7mD", "v" * 200, (page,))
+
+    root, plans = plan_output_paths(
+        cwd=cwd,
+        video=video,
+        page=page,
+        tracks=(SubtitleTrack(7, "en-US", "English", SubtitleTrackKind.HUMAN),),
+    )
+
+    plan = plans[0]
+    assert root.name.endswith("[BV1xx411c7mD]")
+    assert root.name.startswith("~")
+    assert plan.basename.startswith("P01-~")
+    assert plan.basename.endswith(".en-US.7")
+    assert len(str(plan.json_path.resolve())) + 40 == 240
+
+
+def test_path_planner_rejects_cwd_with_no_identity_and_temp_space(tmp_path: Path) -> None:
+    _, cwd = _long_cwd_boundary(tmp_path)
+    page = VideoPage(1, 1, "p" * 200)
+    video = VideoMetadata(1, "BV1xx411c7mD", "v" * 200, (page,))
+
+    with pytest.raises(ExportError, match="工作目录过长"):
+        plan_output_paths(
+            cwd=cwd,
+            video=video,
+            page=page,
+            tracks=(SubtitleTrack(7, "en-US", "English", SubtitleTrackKind.HUMAN),),
+        )
+
+
+def test_path_planner_keeps_collision_identity_with_long_titles(tmp_path: Path) -> None:
+    page = VideoPage(123, 9, "page" * 100)
+    tracks = (
+        SubtitleTrack(42, "a:b", "one", SubtitleTrackKind.HUMAN),
+        SubtitleTrack(42, "a?b", "two", SubtitleTrackKind.AI),
+    )
+    video = VideoMetadata(1, "BV1xx411c7mD", "video" * 100, (page,))
+
+    _, plans = plan_output_paths(cwd=tmp_path, video=video, page=page, tracks=tracks)
+
+    assert all(plan.basename.startswith("P123-") for plan in plans)
+    assert all(".a_b.42~" in plan.basename for plan in plans)
+    assert len({plan.basename.casefold() for plan in plans}) == 2
+    assert all(
+        len(str(path.resolve())) + 40 <= 240
+        for plan in plans
+        for path in (plan.json_path, plan.srt_path)
+    )
 
 
 @pytest.mark.parametrize(

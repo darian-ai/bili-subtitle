@@ -57,32 +57,75 @@ def _digest(value: str) -> str:
 def plan_output_paths(
     *, cwd: Path, video: VideoMetadata, page: VideoPage, tracks: tuple[SubtitleTrack, ...]
 ) -> tuple[Path, tuple[OutputPlan, ...]]:
-    root_base = f"{sanitize_component(video.title)} [{video.bvid}]"
     output_parent = cwd.resolve() / "subtitles"
-    # Reserve room for the immutable page/language/track identity and extension.
-    max_root = _PATH_LIMIT - _TEMP_RESERVE - 64 - len(str(output_parent.resolve())) - 1
-    if max_root < len(video.bvid) + 15:
+    title = sanitize_component(page.title)
+    track_parts = [
+        (track, sanitize_component(track.language, placeholder="lang")) for track in tracks
+    ]
+    # A collision suffix is immutable once two distinct platform identities sanitize
+    # to the same filename.  Budget from the actual identities instead of a fixed
+    # guess: long CI temporary roots should work whenever their real paths fit.
+    identity_groups: dict[str, list[tuple[SubtitleTrack, str]]] = {}
+    for track, language in track_parts:
+        identity_groups.setdefault(f"{language}.{track.track_id}".casefold(), []).append(
+            (track, language)
+        )
+    collision_keys = {
+        key
+        for key, group in identity_groups.items()
+        if len(group) > 1
+        and len({f"{page.number}|{page.cid}|{item.language}|{item.track_id}" for item, _ in group})
+        == len(group)
+    }
+    if any(
+        len({f"{page.number}|{page.cid}|{item.language}|{item.track_id}" for item, _ in group})
+        != len(group)
+        for group in identity_groups.values()
+        if len(group) > 1
+    ):
+        raise ExportError("平台返回了无法唯一规划的重复字幕轨道。")
+
+    immutable_lengths = [
+        len(f"P{page.number:02d}-.{language}.{track.track_id}")
+        + (11 if f"{language}.{track.track_id}".casefold() in collision_keys else 0)
+        + len(".json")
+        for track, language in track_parts
+    ]
+    # The manifest is also atomically published in this directory.  A truncated
+    # page title keeps its stable digest, so reserve that complete minimum too.
+    longest_leaf = max(
+        [len("manifest.json"), *(length + len("~0123456789") for length in immutable_lengths)]
+    )
+    max_root = _PATH_LIMIT - _TEMP_RESERVE - len(str(output_parent)) - 1 - longest_leaf - 1
+    root_suffix = f"~{_digest(video.title)} [{video.bvid}]"
+    if max_root < len(root_suffix):
         raise ExportError("当前工作目录过长，无法安全规划输出路径。")
+    root_base = f"{sanitize_component(video.title)} [{video.bvid}]"
     if len(root_base) > max_root:
-        suffix = f"~{_digest(video.title)} [{video.bvid}]"
-        root_base = sanitize_component(video.title)[: max_root - len(suffix)] + suffix
+        root_base = sanitize_component(video.title)[: max_root - len(root_suffix)] + root_suffix
     root = output_parent / root_base
     raw: list[tuple[SubtitleTrack, str, str]] = []
-    for track in tracks:
+    for track, language in track_parts:
         identity = f"P{page.number:02d}|{page.cid}|{track.language}|{track.track_id}"
-        language = sanitize_component(track.language, placeholder="lang")
-        fixed = f"P{page.number:02d}-.{language}.{track.track_id}~0123456789"
-        max_title = _PATH_LIMIT - _TEMP_RESERVE - len(str(root.resolve())) - 1 - len(fixed) - 5
+        collision_suffix = (
+            f"~{_digest(identity)}"
+            if f"{language}.{track.track_id}".casefold() in collision_keys
+            else ""
+        )
+        fixed = f"P{page.number:02d}-.{language}.{track.track_id}{collision_suffix}.json"
+        max_title = _PATH_LIMIT - _TEMP_RESERVE - len(str(root)) - 1 - len(fixed)
         if max_title < 1:
             raise ExportError("输出路径预算不足。")
-        title = sanitize_component(page.title)
-        if len(title) > max_title:
+        planned_title = title
+        if len(planned_title) > max_title:
             suffix = f"~{_digest(page.title)}"
-            title = title[: max(1, max_title - len(suffix))] + suffix
+            if max_title < len(suffix):
+                raise ExportError("输出路径预算不足。")
+            planned_title = planned_title[: max_title - len(suffix)] + suffix
         raw.append(
             (
                 track,
-                f"P{page.number:02d}-{title}.{language}.{track.track_id}",
+                f"P{page.number:02d}-{planned_title}.{language}.{track.track_id}",
                 identity,
             )
         )
