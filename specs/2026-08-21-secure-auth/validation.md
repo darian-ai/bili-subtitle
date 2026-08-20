@@ -5,11 +5,13 @@
 | 检查 | 结果 |
 |---|---|
 | `uv sync --locked --dev` | 通过 |
-| `uv run pytest` | 通过：99 项测试，分支覆盖率 90.54% |
+| `uv run pytest` | 通过：106 项测试，总覆盖率 92.42% |
 | `uv run ruff check .` | 通过 |
 | `uv run ruff format --check .` | 通过 |
 | `uv run pyright` | 通过：0 errors |
 | 默认测试隔离 | 使用 MockTransport、respx、内存存储及 monkeypatch；未访问真实网络、真实 Credential Manager，未真实等待 |
+
+复核补充：认证状态检查已不再使用 HTTPX 弃用的逐请求 Cookie 参数；测试同时证明凭据仅在检查期间注入同一客户端，检查结束后恢复原 Cookie 容器。有限瞬时网络重试、重试仍受总超时约束、凭据保存失败不得报告成功，以及 CLI 终止结果与 `Ctrl+C` 的退出边界均已有自动化覆盖。
 
 未执行项：真实 Windows Credential Manager 专用测试槽位、真实账号扫码及二维码过期/取消人工流程、远端 Windows GitHub Actions。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
 
