@@ -153,7 +153,9 @@ git diff --check
 - 独立复核注入双文件强制覆盖的第二次 `replace` 失败，证明首个已发布兄弟文件保留、另一旧文件不损坏、临时文件清理，manifest 逐文件动作如实记录为 `replaced`/`failed`。
 - Windows 文件策略复核覆盖非法字符、C0 控制字符、保留名及扩展形式、尾随字符、空组件、大小写不敏感稳定冲突消解和含临时后缀预算的 240 字符绝对路径上限。
 - 全跳过摘要现显式标记“全部已有文件跳过”；秘密与签名 URL 仍由认证、字幕适配器及流程金丝雀测试保护。
-- Windows GitHub Actions：尚未推送，待合并提交 CI 验收，不记录为通过。
+- Windows GitHub Actions：提交 `438980d` 的 Quality run
+  [32410873316](https://github.com/darian-ai/bili-subtitle/actions/runs/32410873316) 通过；
+  锁定依赖同步、178 项测试、Ruff lint、Ruff format 和 strict Pyright 全绿。
 
 ## Windows CI 路径预算修复记录
 
@@ -169,4 +171,14 @@ git diff --check
 - `uv sync --locked --dev`、`uv run --python 3.12 ruff check .`、
   `uv run --python 3.12 ruff format --check .`、`uv run --python 3.12 pyright` 和
   `git diff --check` 均通过；strict Pyright 为 0 errors。
-- 修复后的待合并提交 Windows CI 尚待推送验证，不在本记录中预先标记为通过。
+- 修复后的提交 `438980d` 已由 Windows GitHub Actions Quality run
+  [32410873316](https://github.com/darian-ai/bili-subtitle/actions/runs/32410873316) 验证通过；
+  同步、178 项测试、Ruff lint、Ruff format 与 strict Pyright 全绿。结合 Python 3.12
+  本地 178 项测试、91.94% 分支覆盖率及上述矩阵证据，阶段五全部可合并条件已满足。
+
+## 最终验收结论
+
+- 阶段五计划中的八组任务与全部可合并条件均已完成。
+- Windows 路径预算失败 run 32410441882 已保留为问题证据，修复提交及成功 run
+  32410873316 形成闭环。
+- 本结论仅覆盖阶段五离线完整流程；未执行或声称阶段六的真实平台人工验收、构建、全局安装或发布交付。

@@ -7,7 +7,7 @@
 | Feature | Full V1 Flow |
 | 工作分支 | `feature/full-v1-flow` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 实现完成，本地验收通过，待 Windows CI |
+| 状态 | 已完成并通过本地及 Windows CI 验收 |
 | 日期 | 2026-08-21 |
 
 ## 背景与目标
