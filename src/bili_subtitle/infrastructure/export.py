@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import hashlib
+import re
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -16,6 +19,88 @@ from bili_subtitle.domain.models import (
     VideoMetadata,
     VideoPage,
 )
+
+_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED = re.compile(r"(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$")
+_PATH_LIMIT = 240
+_TEMP_RESERVE = 40
+
+
+@dataclass(frozen=True, slots=True)
+class OutputPlan:
+    basename: str
+    json_path: Path
+    srt_path: Path
+
+
+def sanitize_component(value: str, *, placeholder: str = "untitled") -> str:
+    cleaned = _INVALID.sub("_", value).rstrip(" .")
+    if not cleaned:
+        cleaned = placeholder
+    if _RESERVED.fullmatch(cleaned):
+        cleaned = f"_{cleaned}"
+    return cleaned
+
+
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:10]
+
+
+def plan_output_paths(
+    *, cwd: Path, video: VideoMetadata, page: VideoPage, tracks: tuple[SubtitleTrack, ...]
+) -> tuple[Path, tuple[OutputPlan, ...]]:
+    root_base = f"{sanitize_component(video.title)} [{video.bvid}]"
+    output_parent = cwd.resolve() / "subtitles"
+    # Reserve room for the immutable page/language/track identity and extension.
+    max_root = _PATH_LIMIT - _TEMP_RESERVE - 64 - len(str(output_parent.resolve())) - 1
+    if max_root < len(video.bvid) + 15:
+        raise ExportError("当前工作目录过长，无法安全规划输出路径。")
+    if len(root_base) > max_root:
+        suffix = f"~{_digest(video.title)} [{video.bvid}]"
+        root_base = sanitize_component(video.title)[: max_root - len(suffix)] + suffix
+    root = output_parent / root_base
+    raw: list[tuple[SubtitleTrack, str, str]] = []
+    for track in tracks:
+        identity = f"P{page.number:02d}|{page.cid}|{track.language}|{track.track_id}"
+        fixed = f"P{page.number:02d}-.{sanitize_component(track.language, placeholder='lang')}.{track.track_id}"
+        max_title = _PATH_LIMIT - _TEMP_RESERVE - len(str(root.resolve())) - 1 - len(fixed) - 5
+        if max_title < 1:
+            raise ExportError("输出路径预算不足。")
+        title = sanitize_component(page.title)
+        if len(title) > max_title:
+            suffix = f"~{_digest(page.title)}"
+            title = title[: max(1, max_title - len(suffix))] + suffix
+        raw.append((track, f"P{page.number:02d}-{title}.{sanitize_component(track.language, placeholder='lang')}.{track.track_id}", identity))
+    groups: dict[str, list[int]] = {}
+    for index, (_, basename, _) in enumerate(raw):
+        groups.setdefault(basename.casefold(), []).append(index)
+    plans: list[OutputPlan] = []
+    for index, (_, basename, identity) in enumerate(raw):
+        if len(groups[basename.casefold()]) > 1:
+            basename = f"{basename}~{_digest(identity)}"
+        plans.append(OutputPlan(basename, root / f"{basename}.json", root / f"{basename}.srt"))
+    return root, tuple(plans)
+
+
+def publish_atomic(target: Path, content: bytes, *, replace: bool) -> None:
+    temporary: Path | None = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, raw_path = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        temporary = Path(raw_path)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if replace:
+            os.replace(temporary, target)
+        else:
+            os.link(temporary, target)
+            temporary.unlink()
+    except (OSError, ValueError) as exc:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise ExportError(f"无法安全发布文件：{target.name}") from exc
 
 
 def render_srt(cues: tuple[SubtitleCue, ...]) -> str:
