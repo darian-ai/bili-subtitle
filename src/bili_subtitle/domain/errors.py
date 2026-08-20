@@ -31,3 +31,31 @@ class RedirectError(MetadataError):
 
 class PlatformResponseError(MetadataError):
     """平台响应不符合当前支持的结构。"""
+
+
+class SubtitleError(Exception):
+    """单轨道字幕流程的稳定错误基类。"""
+
+
+class NoSubtitles(SubtitleError):
+    """分集具有合法但为空的字幕集合。"""
+
+
+class AuthenticationRequired(SubtitleError):
+    """当前会话无效。"""
+
+
+class SubtitleAccessDenied(SubtitleError):
+    """当前账号无权访问字幕。"""
+
+
+class SubtitleNetworkError(SubtitleError):
+    """字幕请求发生网络故障。"""
+
+
+class SubtitlePlatformResponseError(SubtitleError):
+    """字幕平台响应不符合支持的结构。"""
+
+
+class ExportError(SubtitleError):
+    """字幕文件无法安全发布。"""

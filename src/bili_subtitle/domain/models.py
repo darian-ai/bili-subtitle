@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import Enum
 
 from bili_subtitle.domain.errors import PlatformResponseError
@@ -58,3 +59,41 @@ class PageSelection:
     pages: tuple[VideoPage, ...]
     source: SelectionSource
     notices: tuple[str, ...] = ()
+
+
+class SubtitleTrackKind(Enum):
+    HUMAN = "human"
+    AI = "ai"
+
+
+@dataclass(frozen=True, slots=True)
+class SubtitleTrack:
+    track_id: int
+    language: str
+    display_name: str
+    kind: SubtitleTrackKind
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.track_id, bool)
+            or self.track_id <= 0
+            or not self.language
+            or not self.display_name
+        ):
+            raise PlatformResponseError("平台返回了无效的字幕轨道。")
+
+
+@dataclass(frozen=True, slots=True)
+class SubtitleCue:
+    start: Decimal
+    end: Decimal
+    text: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.start.is_finite()
+            or not self.end.is_finite()
+            or self.start < 0
+            or self.end < self.start
+        ):
+            raise PlatformResponseError("平台返回了无效的字幕时间。")
