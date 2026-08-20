@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import tempfile
-import hashlib
 import re
+import tempfile
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -62,7 +62,8 @@ def plan_output_paths(
     raw: list[tuple[SubtitleTrack, str, str]] = []
     for track in tracks:
         identity = f"P{page.number:02d}|{page.cid}|{track.language}|{track.track_id}"
-        fixed = f"P{page.number:02d}-.{sanitize_component(track.language, placeholder='lang')}.{track.track_id}"
+        language = sanitize_component(track.language, placeholder="lang")
+        fixed = f"P{page.number:02d}-.{language}.{track.track_id}~0123456789"
         max_title = _PATH_LIMIT - _TEMP_RESERVE - len(str(root.resolve())) - 1 - len(fixed) - 5
         if max_title < 1:
             raise ExportError("输出路径预算不足。")
@@ -70,13 +71,22 @@ def plan_output_paths(
         if len(title) > max_title:
             suffix = f"~{_digest(page.title)}"
             title = title[: max(1, max_title - len(suffix))] + suffix
-        raw.append((track, f"P{page.number:02d}-{title}.{sanitize_component(track.language, placeholder='lang')}.{track.track_id}", identity))
+        raw.append(
+            (
+                track,
+                f"P{page.number:02d}-{title}.{language}.{track.track_id}",
+                identity,
+            )
+        )
     groups: dict[str, list[int]] = {}
     for index, (_, basename, _) in enumerate(raw):
         groups.setdefault(basename.casefold(), []).append(index)
     plans: list[OutputPlan] = []
-    for index, (_, basename, identity) in enumerate(raw):
+    for _, basename, identity in raw:
         if len(groups[basename.casefold()]) > 1:
+            identities = {raw[item][2] for item in groups[basename.casefold()]}
+            if len(identities) != len(groups[basename.casefold()]):
+                raise ExportError("平台返回了无法唯一规划的重复字幕轨道。")
             basename = f"{basename}~{_digest(identity)}"
         plans.append(OutputPlan(basename, root / f"{basename}.json", root / f"{basename}.srt"))
     return root, tuple(plans)
@@ -86,7 +96,9 @@ def publish_atomic(target: Path, content: bytes, *, replace: bool) -> None:
     temporary: Path | None = None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, raw_path = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
         temporary = Path(raw_path)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
@@ -101,6 +113,34 @@ def publish_atomic(target: Path, content: bytes, *, replace: bool) -> None:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         raise ExportError(f"无法安全发布文件：{target.name}") from exc
+
+
+def publish_batch(items: tuple[tuple[Path, bytes, bool], ...]) -> None:
+    """先完整准备全部临时文件，再逐个原子发布。"""
+    staged: list[tuple[Path, Path, bool]] = []
+    try:
+        for target, content, replace in items:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+            )
+            temporary = Path(raw_path)
+            staged.append((target, temporary, replace))
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        for target, temporary, replace in staged:
+            if replace:
+                os.replace(temporary, target)
+            else:
+                os.link(temporary, target)
+                temporary.unlink()
+    except (OSError, ValueError) as exc:
+        raise ExportError("无法安全发布字幕文件。") from exc
+    finally:
+        for _, temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
 
 
 def render_srt(cues: tuple[SubtitleCue, ...]) -> str:

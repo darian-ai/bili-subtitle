@@ -9,12 +9,19 @@ from typing import Protocol
 
 from bili_subtitle.domain.errors import NoSubtitles
 from bili_subtitle.domain.models import PageSelection, SubtitleBody, SubtitleTrack, VideoPage
-from bili_subtitle.infrastructure.export import plan_output_paths, publish_atomic, render_srt
+from bili_subtitle.infrastructure.export import (
+    plan_output_paths,
+    publish_atomic,
+    publish_batch,
+    render_srt,
+)
 
 
 class SubtitlePort(Protocol):
     def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]: ...
-    def download_selected(self, *, bvid: str, cid: int, selected: SubtitleTrack) -> SubtitleBody: ...
+    def download_selected(
+        self, *, bvid: str, cid: int, selected: SubtitleTrack
+    ) -> SubtitleBody: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,10 +59,14 @@ class FlowResult:
 
 
 def run_extraction(
-    *, selection: PageSelection, languages: tuple[str, ...], force: bool,
-    cwd: Path, subtitles: SubtitlePort,
+    *,
+    selection: PageSelection,
+    languages: tuple[str, ...],
+    force: bool,
+    cwd: Path,
+    subtitles: SubtitlePort,
 ) -> FlowResult:
-    if any(not language for language in languages):
+    if any(not language.strip() for language in languages):
         raise ValueError("语言代码不能为空。")
     language_set = frozenset(dict.fromkeys(languages))
     page_results: list[PageResult] = []
@@ -77,7 +88,9 @@ def run_extraction(
             page_results.append(PageResult(page, "no_match"))
             continue
         try:
-            output_root, plans = plan_output_paths(cwd=cwd, video=selection.video, page=page, tracks=selected)
+            output_root, plans = plan_output_paths(
+                cwd=cwd, video=selection.video, page=page, tracks=selected
+            )
         except Exception:
             page_results.append(PageResult(page, "failed", error="输出路径规划失败。"))
             continue
@@ -85,39 +98,71 @@ def run_extraction(
         for track, plan in zip(selected, plans, strict=True):
             json_exists, srt_exists = plan.json_path.exists(), plan.srt_path.exists()
             if not force and json_exists and srt_exists:
-                track_results.append(TrackResult(track, "success", plan.json_path.name, plan.srt_path.name, "skipped", "skipped"))
+                track_results.append(
+                    TrackResult(
+                        track,
+                        "success",
+                        plan.json_path.name,
+                        plan.srt_path.name,
+                        "skipped",
+                        "skipped",
+                    )
+                )
                 continue
             try:
-                body = subtitles.download_selected(bvid=selection.video.bvid, cid=page.cid, selected=track)
+                body = subtitles.download_selected(
+                    bvid=selection.video.bvid, cid=page.cid, selected=track
+                )
                 srt = render_srt(body.cues).encode("utf-8")
                 json_action = "replaced" if json_exists else "written"
                 srt_action = "replaced" if srt_exists else "written"
+                publications: list[tuple[Path, bytes, bool]] = []
                 if force or not json_exists:
-                    publish_atomic(plan.json_path, body.raw_json, replace=json_exists)
+                    publications.append((plan.json_path, body.raw_json, json_exists))
                 else:
                     json_action = "skipped"
                 if force or not srt_exists:
-                    publish_atomic(plan.srt_path, srt, replace=srt_exists)
+                    publications.append((plan.srt_path, srt, srt_exists))
                 else:
                     srt_action = "skipped"
-                track_results.append(TrackResult(track, "success", plan.json_path.name, plan.srt_path.name, json_action, srt_action))
+                publish_batch(tuple(publications))
+                track_results.append(
+                    TrackResult(
+                        track,
+                        "success",
+                        plan.json_path.name,
+                        plan.srt_path.name,
+                        json_action,
+                        srt_action,
+                    )
+                )
             except Exception:
                 track_results.append(TrackResult(track, "failed", error="字幕处理失败。"))
         page_results.append(PageResult(page, "success", tuple(track_results)))
     manifest_failed = False
     if output_root is None:
         try:
-            output_root, _ = plan_output_paths(cwd=cwd, video=selection.video, page=selection.pages[0], tracks=())
+            output_root, _ = plan_output_paths(
+                cwd=cwd, video=selection.video, page=selection.pages[0], tracks=()
+            )
         except Exception:
             output_root = None
     if output_root is not None:
         manifest = {
             "schema_version": 2,
-            "video": {"aid": selection.video.aid, "bvid": selection.video.bvid, "title": selection.video.title},
+            "video": {
+                "aid": selection.video.aid,
+                "bvid": selection.video.bvid,
+                "title": selection.video.title,
+            },
             "pages": [_manifest_page(item) for item in page_results],
         }
         try:
-            publish_atomic(output_root / "manifest.json", (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode(), replace=(output_root / "manifest.json").exists())
+            publish_atomic(
+                output_root / "manifest.json",
+                (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode(),
+                replace=(output_root / "manifest.json").exists(),
+            )
         except Exception:
             manifest_failed = True
     return FlowResult(tuple(page_results), manifest_failed)
@@ -125,10 +170,21 @@ def run_extraction(
 
 def _manifest_page(result: PageResult) -> dict[str, object]:
     return {
-        "number": result.page.number, "cid": result.page.cid, "title": result.page.title,
-        "status": result.status, "error": result.error,
+        "number": result.page.number,
+        "cid": result.page.cid,
+        "title": result.page.title,
+        "status": result.status,
+        "error": result.error,
         "tracks": [
-            {**asdict(track), "track": {"id": track.track.track_id, "language": track.track.language, "display_name": track.track.display_name, "kind": track.track.kind.value}}
+            {
+                **asdict(track),
+                "track": {
+                    "id": track.track.track_id,
+                    "language": track.track.language,
+                    "display_name": track.track.display_name,
+                    "kind": track.track.kind.value,
+                },
+            }
             for track in result.tracks
         ],
     }

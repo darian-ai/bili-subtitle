@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from bili_subtitle.application.auth import login
+from bili_subtitle.application.full_flow import FlowResult, run_extraction
 from bili_subtitle.application.metadata import resolve_selection
 from bili_subtitle.domain import MetadataError
 from bili_subtitle.domain.auth import CredentialState, LoginState
 from bili_subtitle.infrastructure.auth import BilibiliAuthAdapter
 from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, create_http_client
 from bili_subtitle.infrastructure.credentials import CredentialStoreError, KeyringCredentialStore
+from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 from bili_subtitle.infrastructure.terminal_qr import render_qr
 
 extract_app = typer.Typer(
@@ -58,12 +61,13 @@ def extract(
     ] = False,
 ) -> None:
     """提取一个普通 UGC 投稿的站内字幕。"""
-    del lang, force
     if video is None:
         typer.echo(ctx.get_help())
         return
     if page is not None and all_pages:
         raise typer.BadParameter("--page 与 --all-pages 不能同时使用。")
+    if any(not value.strip() for value in (lang or ())):
+        raise typer.BadParameter("--lang 不能是空值。")
 
     store = KeyringCredentialStore()
     try:
@@ -83,6 +87,13 @@ def extract(
                 all_pages=all_pages,
                 metadata=BilibiliMetadataAdapter(client),
             )
+            outcome_result = run_extraction(
+                selection=selection,
+                languages=tuple(lang or ()),
+                force=force,
+                cwd=Path.cwd(),
+                subtitles=BilibiliSubtitleAdapter(client),
+            )
     except (MetadataError, CredentialStoreError) as exc:
         typer.echo(f"错误：{exc}", err=True)
         raise typer.Exit(code=2) from None
@@ -92,12 +103,40 @@ def extract(
 
     for notice in selection.notices:
         typer.echo(notice)
-    typer.echo(f"标题：{_terminal_safe(selection.video.title)}")
-    typer.echo(f"BV号：{selection.video.bvid}")
-    typer.echo(f"av号：av{selection.video.aid}")
-    typer.echo(f"所选分集：{len(selection.pages)}")
-    for item in selection.pages:
-        typer.echo(f"P{item.number:02d} | CID {item.cid} | {_terminal_safe(item.title)}")
+    _render_flow(outcome_result)
+    if outcome_result.exit_code:
+        raise typer.Exit(code=outcome_result.exit_code)
+
+
+def _render_flow(result: FlowResult) -> None:
+    written = replaced = skipped = failed = tracks = no_subtitles = no_match = 0
+    for page in result.pages:
+        if page.status == "no_subtitles":
+            no_subtitles += 1
+            typer.echo(f"P{page.page.number:02d}：无字幕")
+        elif page.status == "no_match":
+            no_match += 1
+            typer.echo(f"P{page.page.number:02d}：无匹配字幕")
+        elif page.status == "failed":
+            failed += 1
+            typer.echo(f"P{page.page.number:02d}：失败（{page.error}）")
+        for track in page.tracks:
+            tracks += 1
+            if track.status == "failed":
+                failed += 1
+                typer.echo(f"P{page.page.number:02d} 轨道 {track.track.track_id}：失败")
+                continue
+            written += sum(action == "written" for action in (track.json_action, track.srt_action))
+            replaced += sum(
+                action == "replaced" for action in (track.json_action, track.srt_action)
+            )
+            skipped += sum(action == "skipped" for action in (track.json_action, track.srt_action))
+            typer.echo(f"P{page.page.number:02d} 轨道 {track.track.track_id}：完成")
+    failed += int(result.manifest_failed)
+    typer.echo(
+        f"摘要：分集 {len(result.pages)}，轨道 {tracks}，写入 {written}，覆盖 {replaced}，"
+        f"跳过 {skipped}，无字幕 {no_subtitles}，无匹配 {no_match}，失败 {failed}。"
+    )
 
 
 def _terminal_safe(value: str) -> str:
