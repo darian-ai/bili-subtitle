@@ -82,6 +82,21 @@ def test_any_existing_target_rejects_before_publication(tmp_path: Path, existing
     assert sorted(path.name for path in tmp_path.iterdir()) == [existing_name]
 
 
+def test_text_encoding_failure_is_export_error_before_any_publication(tmp_path: Path) -> None:
+    page = VideoPage(1, 88, "p")
+    body = SubtitleBody(b'{"body":[]}', (SubtitleCue(Decimal("0"), Decimal("1"), "\ud800"),))
+    with pytest.raises(ExportError):
+        export_single_track(
+            output_dir=tmp_path,
+            basename="x",
+            video=VideoMetadata(7, "BV1xx411c7mD", "v", (page,)),
+            page=page,
+            track=SubtitleTrack(1, "x", "x", SubtitleTrackKind.HUMAN),
+            body=body,
+        )
+    assert not list(tmp_path.iterdir())
+
+
 def test_manifest_failure_keeps_published_subtitles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

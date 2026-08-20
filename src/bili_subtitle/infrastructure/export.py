@@ -51,24 +51,32 @@ def export_single_track(
         raise ExportError("无法创建字幕输出目录。") from exc
     # Reject the complete operation before publishing anything.  Phase four
     # deliberately has no overwrite, skip, or missing-file repair semantics.
-    if any(path.exists() for path in (json_path, srt_path, manifest_path)):
-        raise ExportError("字幕输出目标已经存在。")
+    try:
+        if any(path.exists() for path in (json_path, srt_path, manifest_path)):
+            raise ExportError("字幕输出目标已经存在。")
+        srt_bytes = render_srt(body.cues).encode("utf-8")
+        manifest = {
+            "schema_version": 1,
+            "video": {"aid": video.aid, "bvid": video.bvid, "title": video.title},
+            "page": {"number": page.number, "cid": page.cid, "title": page.title},
+            "track": {
+                "id": track.track_id,
+                "language": track.language,
+                "display_name": track.display_name,
+                "kind": track.kind.value,
+            },
+            "files": {"json": json_path.name, "srt": srt_path.name},
+            "result": "success",
+        }
+        manifest_bytes = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+    except ExportError:
+        raise
+    except (ArithmeticError, OSError, UnicodeError, ValueError) as exc:
+        raise ExportError("无法准备字幕输出内容。") from exc
     _publish_new(json_path, body.raw_json)
-    _publish_new(srt_path, render_srt(body.cues).encode("utf-8"))
-    manifest = {
-        "schema_version": 1,
-        "video": {"aid": video.aid, "bvid": video.bvid, "title": video.title},
-        "page": {"number": page.number, "cid": page.cid, "title": page.title},
-        "track": {
-            "id": track.track_id,
-            "language": track.language,
-            "display_name": track.display_name,
-            "kind": track.kind.value,
-        },
-        "files": {"json": json_path.name, "srt": srt_path.name},
-        "result": "success",
-    }
-    manifest_bytes = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode()
+    _publish_new(srt_path, srt_bytes)
     _publish_new(manifest_path, manifest_bytes)
     return json_path, srt_path, manifest_path
 
