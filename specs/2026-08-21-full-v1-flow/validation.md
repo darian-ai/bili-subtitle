@@ -154,3 +154,19 @@ git diff --check
 - Windows 文件策略复核覆盖非法字符、C0 控制字符、保留名及扩展形式、尾随字符、空组件、大小写不敏感稳定冲突消解和含临时后缀预算的 240 字符绝对路径上限。
 - 全跳过摘要现显式标记“全部已有文件跳过”；秘密与签名 URL 仍由认证、字幕适配器及流程金丝雀测试保护。
 - Windows GitHub Actions：尚未推送，待合并提交 CI 验收，不记录为通过。
+
+## Windows CI 路径预算修复记录
+
+- 首次推送的 Windows GitHub Actions Quality run
+  [32410441882](https://github.com/darian-ai/bili-subtitle/actions/runs/32410441882) 失败：
+  Python 3.12 runner 的典型长 `tmp_path` 暴露了输出根固定预留 64 字符造成的误拒绝；
+  7 项完整流程测试失败，覆盖率连带降至 81.48%。该 run 仅作为失败证据，不标记为通过。
+- 修复后路径规划按本次轨道的实际 P 序号、净化语言、轨道 ID、必要冲突摘要、扩展名与
+  manifest 精确预算；视频/分集标题仍是唯一可截断部分，并保留稳定摘要、BVID 和 40 字符
+  同目录临时文件空间。绝对工作目录确实无法容纳这些不可变身份时仍明确失败。
+- 新增长工作目录精确 240 字符边界、越界失败、输出根最小化、P/语言/轨道身份与冲突摘要
+  保留测试；修复后的 Python 3.12 本地全量结果为 178 项通过，分支覆盖率 91.94%。
+- `uv sync --locked --dev`、`uv run --python 3.12 ruff check .`、
+  `uv run --python 3.12 ruff format --check .`、`uv run --python 3.12 pyright` 和
+  `git diff --check` 均通过；strict Pyright 为 0 errors。
+- 修复后的待合并提交 Windows CI 尚待推送验证，不在本记录中预先标记为通过。
