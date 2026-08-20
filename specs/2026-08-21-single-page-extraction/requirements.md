@@ -7,7 +7,7 @@
 | Feature | Single-page Extraction |
 | 工作分支 | `feature/single-page-extraction` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 实现及独立本地复核完成，待 Windows CI |
+| 状态 | 已完成并通过合并验收 |
 | 日期 | 2026-08-21 |
 
 ## 背景与目标

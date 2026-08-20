@@ -158,4 +158,16 @@ uv run pyright
   `git diff --check`：全部通过；Pyright 为 0 errors。
 - 独立范围审计确认未接入阶段五的字幕多分集/多轨道循环、语言过滤、覆盖策略或退出码聚合，
   未发现媒体下载、ASR、OCR、翻译、私有接口或访问控制绕过实现。
-- 唯一剩余合并门禁仍为待合并提交上的 Windows GitHub Actions；本地记录不替代 CI。
+- 当时唯一剩余合并门禁为待合并提交上的 Windows GitHub Actions；该门禁已由下方 CI
+  验证记录满足。
+
+## 2026-08-21 Windows CI 验证记录
+
+- 待合并实现提交：`0dcb9b8`。
+- GitHub Actions Quality run：
+  [32408471833](https://github.com/darian-ai/bili-subtitle/actions/runs/32408471833)，结论为成功。
+- Windows job 的依赖同步、158 项测试、Ruff lint、Ruff format check 与 strict Pyright
+  全部通过；结合独立本地复核的 93.43% 覆盖率，自动化质量门禁全部满足。
+- 阶段四规格明确不要求真实账号或真实投稿网络提取；真实 AI 字幕提取保留为阶段六人工验收，
+  因而不存在尚未执行的阶段四真人平台强制项。
+- 可合并条件逐项具备实现、直接测试、本地检查、范围审计与 Windows CI 证据，阶段四验收完成。
