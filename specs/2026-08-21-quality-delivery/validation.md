@@ -177,3 +177,13 @@ CI 链接。不得记录账号、Cookie、二维码、签名 URL、请求头、�
 - 使用真实平台正常权限对一个含 AI 字幕的普通 UGC 投稿完成人工端到端与 JSON/SRT 忠实性抽查。
 - 使用真实普通多分集 UGC 投稿验证默认全部、`--page N`、重复跳过、`--force`、身份、摘要及退出码。
 - 在待合并提交上取得扩展后的 Windows CI 成功 run，并补充链接和提交哈希。
+
+## 2026-08-21 独立复核与加固记录
+
+- 独立复核在提交 `dca9835e2db26a4ed1b7117d5004b989298ecaa9` 上补充默认网络封锁；任何未由替身接管的 socket 连接都会使 pytest 立即失败。全量 191 项测试通过，分支覆盖率 91.94%。
+- `scripts/verify_release.py` 现同时检查 wheel/sdist 成员内容中的秘密金丝雀，并以临时目录从 sdist 独立重建 wheel；临时目录由标准库管理，不接触用户工具目录。
+- 隔离安装再次从本地 wheel 成功安装，并在仓库外的新 PowerShell 仅通过隔离 `PATH` 调用帮助；额外用预置哨兵值证明脚本结束后完整恢复调用者原有 `UV_TOOL_DIR` 和 `UV_TOOL_BIN_DIR`。
+- README 默认输出入口修正为当前工作目录下的 `subtitles`，具体文件规则仍只链接 Mission；安装、升级、卸载、认证、主命令与质量命令均与实际帮助及执行结果一致。
+- 归档名称为 `bili_subtitle-0.1.0-py3-none-any.whl` 与 `bili_subtitle-0.1.0.tar.gz`；身份、版本、Python 要求、五项直接运行时依赖、控制台入口和发布文件范围一致。归档包含本验证文件，因此不在源内记录会因记录本身改变的自引用哈希；CI 以待合并提交重新构建的产物为准。
+- 项目当前未声明许可证或作者，也不发布到包索引或 Release。复核不擅自替所有者作法律授权或身份决定；这不阻碍当前经授权的本地构建/安装边界，任何外部分发前必须先由所有者确定并补齐许可证元数据。
+- `uv sync --locked --dev`、pytest、Ruff lint、Ruff format check、strict Pyright、构建、归档及 sdist 重建校验、隔离工具安装和 `git diff --check` 均返回 `0`。真实 AI 投稿、真实多分集投稿及待合并提交 Windows CI 仍未完成，阶段六/V1 仍不得声明完成。
