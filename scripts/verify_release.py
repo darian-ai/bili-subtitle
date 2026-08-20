@@ -23,6 +23,7 @@ FORBIDDEN_PARTS = {
     "dist",
 }
 FORBIDDEN_SUFFIXES = {".json.tmp", ".srt", ".tmp"}
+FORBIDDEN_TOP_LEVEL = {".agents", ".github", "tests"}
 EXPECTED_REQUIRES = {
     "httpx>=0.28",
     "keyring>=25.6",
@@ -41,6 +42,13 @@ def _safe_names(names: list[str]) -> None:
             raw_name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES
         ):
             raise ValueError(f"development or generated file in archive: {raw_name}")
+
+
+def _check_sdist_scope(names: list[str]) -> None:
+    for raw_name in names:
+        parts = PurePosixPath(raw_name).parts
+        if len(parts) > 1 and parts[1] in FORBIDDEN_TOP_LEVEL:
+            raise ValueError(f"non-release tree in sdist: {raw_name}")
 
 
 def _check_metadata(raw: bytes) -> None:
@@ -78,6 +86,7 @@ def verify(dist: Path) -> tuple[Path, Path]:
     with tarfile.open(sdist, "r:gz") as archive:
         names = archive.getnames()
         _safe_names(names)
+        _check_sdist_scope(names)
         root = f"bili_subtitle-{VERSION}/"
         required = {
             root + "README.md",

@@ -32,6 +32,12 @@ def test_archive_validator_requires_exact_release_pair(tmp_path: Path) -> None:
         module.verify(tmp_path)
 
 
+def test_sdist_scope_rejects_development_trees() -> None:
+    module = _release_module()
+    with pytest.raises(ValueError, match="non-release tree"):
+        module._check_sdist_scope(["bili_subtitle-0.1.0/tests/test_secret.py"])
+
+
 def test_archive_validator_rejects_bad_wheel_name(tmp_path: Path) -> None:
     module = _release_module()
     wheel = tmp_path / "unexpected.whl"

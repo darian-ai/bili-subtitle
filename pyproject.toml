@@ -31,6 +31,16 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/bili_subtitle"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/README.md",
+    "/pyproject.toml",
+    "/src/bili_subtitle",
+    "/specs/mission.md",
+    "/specs/tech-stack.md",
+    "/specs/roadmap.md",
+]
+
 [tool.pytest.ini_options]
 addopts = [
     "-ra",
