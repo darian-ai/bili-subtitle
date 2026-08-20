@@ -3,7 +3,7 @@
 ## 执行状态
 
 - 任务组 1—7：已完成实现与离线自动化验证。
-- 任务组 8：本地自动化、依赖与范围审计已完成；真实 Windows Credential Manager 测试槽位、人工扫码、推送及 Windows GitHub Actions 尚待外部验收。
+- 任务组 8：本地自动化、依赖与范围审计、真实 Windows Credential Manager 专用测试槽位及 Windows GitHub Actions 已完成；真实账号扫码、二维码过期和取消仍待人工验收。
 - 下列复选框保留原始合并清单；不得把未执行的人工或 CI 项标记为完成。
 
 ## 1. 建立认证模块边界与依赖
@@ -65,8 +65,8 @@
 ## 8. 完成验证与合并验收
 
 - [x] 执行 [`validation.md`](./validation.md) 的全部自动化命令、认证命令和主流程场景。
-- [ ] 在 Windows 上通过测试槽位验证 Credential Manager 读写清除，并在结束后清除测试凭据。
+- [x] 在 Windows 上通过测试槽位验证 Credential Manager 读写清除，并在结束后清除测试凭据。
 - [ ] 人工扫码验证二维码显示、成功保存、状态复用、自动恢复、过期/取消终止和清除流程。
 - [x] 审计直接与传递依赖，确认没有浏览器自动化、媒体下载、ASR、OCR 或绕过能力。
 - [x] 确认 feature spec、实现、测试和锁文件一致，工作区没有无关改动。
-- [ ] 提交并推送 feature 分支，确认 Windows GitHub Actions 全部质量检查通过。
+- [x] 提交并推送 feature 分支，确认 Windows GitHub Actions 全部质量检查通过（[Quality run 32398440533](https://github.com/darian-ai/bili-subtitle/actions/runs/32398440533)，提交 `234c3ed`）。

@@ -13,7 +13,15 @@
 
 复核补充：认证状态检查已不再使用 HTTPX 弃用的逐请求 Cookie 参数；测试同时证明凭据仅在检查期间注入同一客户端，检查结束后恢复原 Cookie 容器。有限瞬时网络重试、重试仍受总超时约束、凭据保存失败不得报告成功，以及 CLI 终止结果与 `Ctrl+C` 的退出边界均已有自动化覆盖。
 
-未执行项：真实 Windows Credential Manager 专用测试槽位、真实账号扫码及二维码过期/取消人工流程、远端 Windows GitHub Actions。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
+## 2026-08-21 外部验证记录
+
+| 检查 | 结果 |
+|---|---|
+| Windows Credential Manager 专用测试槽位 | 通过：在本机 Windows 上使用独立 service `bili-subtitle-phase3-validation` 与 account `codex-dedicated-test-slot`，完成无值 → 写入 → 读取等值 → 删除 → 无值；`finally` 清理通过 |
+| 默认凭据隔离 | 通过：验收未读取或覆盖默认槽位，记录中未包含秘密 |
+| Windows GitHub Actions | 通过：[Quality run 32398440533](https://github.com/darian-ai/bili-subtitle/actions/runs/32398440533) 在提交 `234c3ed` 上完成，`sync`、测试、Ruff lint、Ruff format 与 Pyright 全部通过 |
+
+未执行项：真实账号扫码，以及二维码过期和取消的人工流程。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
 
 ## 自动化验证
 
@@ -129,6 +137,6 @@ CLI 测试必须锁定简体中文状态标签、标准输出/错误边界和退
 - 阶段一、阶段二回归、Ruff、格式检查、strict Pyright、覆盖率门槛和 Windows CI 全部通过。
 - 锁文件、feature spec 和实现保持一致，工作区除本 feature 的预期文件外没有无关改动。
 
-## 本地验证记录
+## 验证记录约束
 
-阶段实现完成后填写。记录只能包含环境、命令、测试数量、覆盖率、状态和 CI 链接，不得记录账号、Cookie、二维码内容、二维码密钥或平台响应正文。
+后续记录只能包含环境、命令、测试数量、覆盖率、状态和 CI 链接，不得记录真实账号、Cookie、二维码内容、二维码密钥或平台响应正文。专用测试槽位标识只用于证明与默认槽位隔离，不得用于真实账号。
