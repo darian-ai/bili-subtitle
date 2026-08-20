@@ -33,6 +33,14 @@ class OutputPlan:
     srt_path: Path
 
 
+class BatchPublishError(ExportError):
+    """批量发布失败，同时保留已经原子发布的目标证据。"""
+
+    def __init__(self, published: tuple[Path, ...]) -> None:
+        super().__init__("无法安全发布字幕文件。")
+        self.published = published
+
+
 def sanitize_component(value: str, *, placeholder: str = "untitled") -> str:
     cleaned = _INVALID.sub("_", value).rstrip(" .")
     if not cleaned:
@@ -89,6 +97,10 @@ def plan_output_paths(
                 raise ExportError("平台返回了无法唯一规划的重复字幕轨道。")
             basename = f"{basename}~{_digest(identity)}"
         plans.append(OutputPlan(basename, root / f"{basename}.json", root / f"{basename}.srt"))
+    for plan in plans:
+        for path in (plan.json_path, plan.srt_path):
+            if len(str(path.resolve())) + _TEMP_RESERVE > _PATH_LIMIT:
+                raise ExportError("输出路径预算不足。")
     return root, tuple(plans)
 
 
@@ -118,6 +130,7 @@ def publish_atomic(target: Path, content: bytes, *, replace: bool) -> None:
 def publish_batch(items: tuple[tuple[Path, bytes, bool], ...]) -> None:
     """先完整准备全部临时文件，再逐个原子发布。"""
     staged: list[tuple[Path, Path, bool]] = []
+    published: list[Path] = []
     try:
         for target, content, replace in items:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -136,8 +149,9 @@ def publish_batch(items: tuple[tuple[Path, bytes, bool], ...]) -> None:
             else:
                 os.link(temporary, target)
                 temporary.unlink()
+            published.append(target)
     except (OSError, ValueError) as exc:
-        raise ExportError("无法安全发布字幕文件。") from exc
+        raise BatchPublishError(tuple(published)) from exc
     finally:
         for _, temporary, _ in staged:
             temporary.unlink(missing_ok=True)

@@ -10,6 +10,8 @@ from typing import Protocol
 from bili_subtitle.domain.errors import NoSubtitles
 from bili_subtitle.domain.models import PageSelection, SubtitleBody, SubtitleTrack, VideoPage
 from bili_subtitle.infrastructure.export import (
+    BatchPublishError,
+    OutputPlan,
     plan_output_paths,
     publish_atomic,
     publish_batch,
@@ -87,15 +89,37 @@ def run_extraction(
         if not selected:
             page_results.append(PageResult(page, "no_match"))
             continue
+        plans: list[OutputPlan | None]
         try:
-            output_root, plans = plan_output_paths(
+            output_root, complete_plans = plan_output_paths(
                 cwd=cwd, video=selection.video, page=page, tracks=selected
             )
+            plans = list(complete_plans)
         except Exception:
-            page_results.append(PageResult(page, "failed", error="输出路径规划失败。"))
-            continue
+            # 路径身份包含轨道字段；单条异常轨道不能阻止同分集其他轨道。
+            plans = []
+            for track in selected:
+                try:
+                    candidate_root, candidate = plan_output_paths(
+                        cwd=cwd, video=selection.video, page=page, tracks=(track,)
+                    )
+                    output_root = candidate_root
+                    plans.append(candidate[0])
+                except Exception:
+                    plans.append(None)
+            collisions: dict[str, list[int]] = {}
+            for index, plan in enumerate(plans):
+                if plan is not None:
+                    collisions.setdefault(plan.basename.casefold(), []).append(index)
+            for indexes in collisions.values():
+                if len(indexes) > 1:
+                    for index in indexes:
+                        plans[index] = None
         track_results: list[TrackResult] = []
         for track, plan in zip(selected, plans, strict=True):
+            if plan is None:
+                track_results.append(TrackResult(track, "failed", error="输出路径规划失败。"))
+                continue
             json_exists, srt_exists = plan.json_path.exists(), plan.srt_path.exists()
             if not force and json_exists and srt_exists:
                 track_results.append(
@@ -134,6 +158,31 @@ def run_extraction(
                         plan.srt_path.name,
                         json_action,
                         srt_action,
+                    )
+                )
+            except BatchPublishError as exc:
+                published = set(exc.published)
+                if plan.json_path in published:
+                    json_action = "replaced" if json_exists else "written"
+                elif force or not json_exists:
+                    json_action = "failed"
+                else:
+                    json_action = "skipped"
+                if plan.srt_path in published:
+                    srt_action = "replaced" if srt_exists else "written"
+                elif force or not srt_exists:
+                    srt_action = "failed"
+                else:
+                    srt_action = "skipped"
+                track_results.append(
+                    TrackResult(
+                        track,
+                        "failed",
+                        plan.json_path.name if plan.json_path.exists() else None,
+                        plan.srt_path.name if plan.srt_path.exists() else None,
+                        json_action,
+                        srt_action,
+                        "字幕文件发布失败。",
                     )
                 )
             except Exception:

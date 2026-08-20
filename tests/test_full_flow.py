@@ -1,8 +1,10 @@
+import os
 from pathlib import Path
 
 import pytest
 
 import bili_subtitle.application.full_flow as flow_module
+import bili_subtitle.infrastructure.export as export_module
 from bili_subtitle.application.full_flow import run_extraction
 from bili_subtitle.domain.models import (
     PageSelection,
@@ -114,6 +116,73 @@ def test_track_failure_isolated_and_exit_codes(tmp_path: Path) -> None:
             cwd=tmp_path,
             subtitles=Subtitles(),
         )
+
+
+def test_invalid_track_path_only_fails_that_track(tmp_path: Path) -> None:
+    class AbnormalLanguage(Subtitles):
+        def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
+            tracks = super().discover(bvid=bvid, cid=cid)
+            if not tracks:
+                return tracks
+            return (
+                SubtitleTrack(99, "x" * 500, "bad", SubtitleTrackKind.HUMAN),
+                tracks[1],
+            )
+
+    result = run_extraction(
+        selection=_selection(),
+        languages=(),
+        force=False,
+        cwd=tmp_path,
+        subtitles=AbnormalLanguage(),
+    )
+
+    assert result.exit_code == 1
+    assert result.pages[0].tracks[0].status == "failed"
+    assert result.pages[0].tracks[0].error == "输出路径规划失败。"
+    assert result.pages[0].tracks[1].status == "success"
+
+
+def test_second_replace_failure_preserves_first_and_records_partial_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subtitles = Subtitles()
+    initial = run_extraction(
+        selection=_selection(), languages=("en-US",), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+    track = initial.pages[0].tracks[0]
+    root = next((tmp_path / "subtitles").iterdir())
+    assert track.json_file and track.srt_file
+    json_path, srt_path = root / track.json_file, root / track.srt_file
+    old_json, old_srt = json_path.read_bytes(), srt_path.read_bytes()
+    real_replace = os.replace
+    replacements = 0
+
+    def fail_second(source: os.PathLike[str], target: os.PathLike[str]) -> None:
+        nonlocal replacements
+        replacements += 1
+        if replacements == 2:
+            raise OSError("injected second replace failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(export_module.os, "replace", fail_second)
+    result = run_extraction(
+        selection=_selection(), languages=("en-US",), force=True, cwd=tmp_path, subtitles=subtitles
+    )
+
+    failed = result.pages[0].tracks[0]
+    assert result.exit_code == 2
+    assert failed.status == "failed"
+    assert failed.json_action == "replaced"
+    assert failed.srt_action == "failed"
+    assert json_path.read_bytes() == old_json
+    assert srt_path.read_bytes() == old_srt
+    assert not list(root.glob(".*.tmp"))
+    manifest = __import__("json").loads((root / "manifest.json").read_text("utf-8"))
+    manifest_track = manifest["pages"][0]["tracks"][0]
+    assert manifest_track["json_action"] == "replaced"
+    assert manifest_track["srt_action"] == "failed"
+    assert manifest_track["status"] == "failed"
 
 
 def test_no_match_missing_repair_force_and_manifest_failure(
