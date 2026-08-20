@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "bili-subtitle"
 version = "0.1.0"
 description = "提取 Bilibili 站内已有字幕的 Windows 优先 CLI"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28",
