@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from bili_subtitle import cli
 from bili_subtitle.application.auth import AuthOutcome
+from bili_subtitle.application.full_flow import FlowResult, PageResult, TrackResult
 from bili_subtitle.domain import PageSelection, SelectionSource, VideoMetadata, VideoPage
 from bili_subtitle.domain.auth import (
     CredentialRead,
@@ -17,6 +18,7 @@ from bili_subtitle.domain.auth import (
     SessionCredential,
 )
 from bili_subtitle.domain.errors import InputError
+from bili_subtitle.domain.models import SubtitleTrack, SubtitleTrackKind
 
 runner = CliRunner()
 
@@ -31,6 +33,12 @@ def authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
         "login",
         fake_login,
     )
+
+    def fake_flow(**kwargs: object) -> FlowResult:
+        del kwargs
+        return FlowResult((), False)
+
+    monkeypatch.setattr(cli, "run_extraction", fake_flow)
 
 
 def test_root_help_describes_full_contract() -> None:
@@ -51,7 +59,7 @@ def test_root_without_video_shows_help() -> None:
     assert "Usage:" in result.output
 
 
-def test_extract_prints_metadata_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_prints_flow_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     video = VideoMetadata(
         123,
         "BV1xx411c7mD",
@@ -72,11 +80,7 @@ def test_extract_prints_metadata_summary(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert result.exit_code == 0
     assert "提示：已覆盖。" in result.output
-    assert "标题：标题 伪造行" in result.output
-    assert "BV号：BV1xx411c7mD" in result.output
-    assert "av号：av123" in result.output
-    assert "所选分集：1" in result.output
-    assert "P01 | CID 456 | 第一集 " in result.output
+    assert "摘要：分集 0" in result.output
 
 
 def test_extract_maps_domain_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,6 +99,57 @@ def test_extract_rejects_mutually_exclusive_page_options() -> None:
 
     assert result.exit_code == 2
     assert "不能同时使用" in result.output
+
+
+def test_extract_rejects_empty_language() -> None:
+    result = runner.invoke(cli.extract_app, ["BV1xx411c7mD", "--lang", " "])
+    assert result.exit_code == 2
+
+
+def test_render_flow_classifications() -> None:
+    page = VideoPage(1, 1, "unsafe\n")
+    track = SubtitleTrack(1, "zh-CN", "x", SubtitleTrackKind.HUMAN)
+    result = FlowResult(
+        (
+            PageResult(
+                page,
+                "success",
+                (
+                    TrackResult(track, "success", json_action="written", srt_action="skipped"),
+                    TrackResult(track, "failed", error="x"),
+                ),
+            ),
+            PageResult(VideoPage(2, 2, "x"), "no_match"),
+            PageResult(VideoPage(3, 3, "x"), "failed", error="发现失败。"),
+        ),
+        True,
+    )
+    cli._render_flow(result)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_render_flow_explicitly_labels_all_skipped(capsys: pytest.CaptureFixture[str]) -> None:
+    page = VideoPage(1, 1, "x")
+    track = SubtitleTrack(1, "zh-CN", "x", SubtitleTrackKind.HUMAN)
+    cli._render_flow(  # pyright: ignore[reportPrivateUsage]
+        FlowResult(
+            (
+                PageResult(
+                    page,
+                    "success",
+                    (
+                        TrackResult(
+                            track,
+                            "success",
+                            json_action="skipped",
+                            srt_action="skipped",
+                        ),
+                    ),
+                ),
+            ),
+            False,
+        )
+    )
+    assert "全部已有文件跳过" in capsys.readouterr().out
 
 
 def test_auth_help_lists_commands() -> None:
