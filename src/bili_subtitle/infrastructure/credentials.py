@@ -75,7 +75,7 @@ class KeyringCredentialStore:
                 return False
             keyring.delete_password(SERVICE_NAME, DEFAULT_ACCOUNT)
             return True
-        except PasswordDeleteError:
-            return False
+        except PasswordDeleteError as exc:
+            raise CredentialStoreError("清除 Credential Manager 凭据失败。") from exc
         except KeyringError as exc:
             raise CredentialStoreError("清除 Credential Manager 凭据失败。") from exc

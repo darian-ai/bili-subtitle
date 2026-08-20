@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import httpx
 import pytest
 import respx
-from keyring.errors import KeyringError
+from keyring.errors import KeyringError, PasswordDeleteError
 
 from bili_subtitle.application.auth import login
 from bili_subtitle.domain.auth import (
@@ -267,6 +267,20 @@ def test_keyring_error_is_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(CredentialStoreError) as caught:
         KeyringCredentialStore().read()
     assert "backend detail" not in str(caught.value)
+
+
+def test_keyring_delete_failure_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def get(service: str, account: str) -> str:
+        return "present"
+
+    monkeypatch.setattr("keyring.get_password", get)
+
+    def fail(service: str, account: str) -> None:
+        raise PasswordDeleteError("detail")
+
+    monkeypatch.setattr("keyring.delete_password", fail)
+    with pytest.raises(CredentialStoreError, match="清除"):
+        KeyringCredentialStore().clear()
 
 
 def test_terminal_qr_does_not_print_raw_content(capsys: pytest.CaptureFixture[str]) -> None:
