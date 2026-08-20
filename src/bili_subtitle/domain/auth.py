@@ -14,10 +14,7 @@ class SessionCredential:
 
     def __post_init__(self) -> None:
         clean = dict(self.cookies)
-        if not clean or any(
-            not isinstance(k, str) or not k or not isinstance(v, str) or not v
-            for k, v in clean.items()
-        ):
+        if not clean or any(not k or not v for k, v in clean.items()):
             raise ValueError("会话凭据格式无效。")
         object.__setattr__(self, "cookies", MappingProxyType(clean))
 

@@ -32,11 +32,14 @@ class BilibiliAuthAdapter:
         if payload.get("code") != 0:
             return LoginStatus(LoginState.INVALID)
         data = payload.get("data")
-        if not isinstance(data, Mapping) or not isinstance(data.get("isLogin"), bool):
+        if not isinstance(data, Mapping):
             raise PlatformResponseError("平台登录状态响应结构异常。")
-        if not data["isLogin"]:
+        obj = cast(Mapping[str, object], data)
+        if not isinstance(obj.get("isLogin"), bool):
+            raise PlatformResponseError("平台登录状态响应结构异常。")
+        if not obj["isLogin"]:
             return LoginStatus(LoginState.INVALID)
-        name = data.get("uname")
+        name = obj.get("uname")
         return LoginStatus(LoginState.VALID, name if isinstance(name, str) else None)
 
     def request_qr(self) -> QrSession:
@@ -44,13 +47,12 @@ class BilibiliAuthAdapter:
         if payload.get("code") != 0:
             raise PlatformResponseError("平台拒绝申请登录二维码。")
         data = payload.get("data")
-        if (
-            not isinstance(data, Mapping)
-            or not isinstance(data.get("url"), str)
-            or not isinstance(data.get("qrcode_key"), str)
-        ):
+        if not isinstance(data, Mapping):
             raise PlatformResponseError("平台二维码响应结构异常。")
-        return QrSession(cast(str, data["url"]), cast(str, data["qrcode_key"]))
+        obj = cast(Mapping[str, object], data)
+        if not isinstance(obj.get("url"), str) or not isinstance(obj.get("qrcode_key"), str):
+            raise PlatformResponseError("平台二维码响应结构异常。")
+        return QrSession(cast(str, obj["url"]), cast(str, obj["qrcode_key"]))
 
     def poll(self, key: str) -> PollResult:
         response = self._get(_POLL, params={"qrcode_key": key})
@@ -58,9 +60,12 @@ class BilibiliAuthAdapter:
         if payload.get("code") != 0:
             raise PlatformResponseError("平台拒绝二维码状态请求。")
         data = payload.get("data")
-        if not isinstance(data, Mapping) or not isinstance(data.get("code"), int):
+        if not isinstance(data, Mapping):
             raise PlatformResponseError("平台二维码状态响应结构异常。")
-        code = data["code"]
+        obj = cast(Mapping[str, object], data)
+        code = obj.get("code")
+        if not isinstance(code, int) or isinstance(code, bool):
+            raise PlatformResponseError("平台二维码状态响应结构异常。")
         states = {
             86101: LoginState.UNSCANNED,
             86090: LoginState.CONFIRM,
@@ -68,7 +73,7 @@ class BilibiliAuthAdapter:
             86039: LoginState.CANCELLED,
         }
         if code in states:
-            return PollResult(states[cast(int, code)])
+            return PollResult(states[code])
         if code != 0:
             raise PlatformResponseError("平台返回未知二维码状态。")
         cookies = {name: response.cookies.get(name) for name in _REQUIRED_COOKIES}
@@ -79,9 +84,15 @@ class BilibiliAuthAdapter:
     def apply(self, credential: SessionCredential) -> None:
         self._client.cookies.update(dict(credential.cookies))
 
-    def _get(self, url: str, **kwargs: object) -> httpx.Response:
+    def _get(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> httpx.Response:
         try:
-            response = self._client.get(url, **kwargs)
+            response = self._client.get(url, params=params, cookies=cookies)
             response.raise_for_status()
             return response
         except httpx.HTTPError as exc:

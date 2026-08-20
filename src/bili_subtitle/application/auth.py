@@ -16,6 +16,7 @@ from bili_subtitle.domain.auth import (
     QrSession,
     SessionCredential,
 )
+from bili_subtitle.domain.errors import NetworkError
 
 
 class Store(Protocol):
@@ -64,7 +65,7 @@ def login(
         try:
             result = auth.poll(session.key)
             errors = 0
-        except Exception:
+        except NetworkError:
             errors += 1
             if errors > retries:
                 raise

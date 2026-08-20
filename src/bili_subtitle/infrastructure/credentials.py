@@ -33,17 +33,19 @@ def deserialize_credential(raw: str) -> SessionCredential:
         value = cast(object, json.loads(raw))
     except (ValueError, TypeError) as exc:
         raise ValueError("已保存凭据格式无效。") from exc
-    if (
-        not isinstance(value, Mapping)
-        or set(value) != {"version", "cookies"}
-        or value.get("version") != 1
-    ):
+    if not isinstance(value, Mapping):
         raise ValueError("已保存凭据格式无效。")
-    cookies = value.get("cookies")
+    obj = cast(Mapping[object, object], value)
+    if set(obj) != {"version", "cookies"} or obj.get("version") != 1:
+        raise ValueError("已保存凭据格式无效。")
+    cookies = obj.get("cookies")
     if not isinstance(cookies, Mapping):
         raise ValueError("已保存凭据格式无效。")
+    cookie_obj = cast(Mapping[object, object], cookies)
+    if any(not isinstance(k, str) or not isinstance(v, str) for k, v in cookie_obj.items()):
+        raise ValueError("已保存凭据格式无效。")
     try:
-        return SessionCredential(cast(Mapping[str, str], cookies))
+        return SessionCredential(cast(Mapping[str, str], cookie_obj))
     except ValueError as exc:
         raise ValueError("已保存凭据格式无效。") from exc
 
