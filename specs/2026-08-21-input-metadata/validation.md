@@ -106,3 +106,4 @@ uv run pyright
 - HTTP 状态、平台结果码、网络失败、非法重定向和异常响应结构均能映射为稳定错误。
 - 主命令摘要、覆盖提示、控制字符净化和退出码由 CLI 测试锁定。
 - 测试未访问真实网络、未读取真实凭据，也未创建字幕输出。
+- Windows GitHub Actions [`Quality` run 32393355861](https://github.com/darian-ai/bili-subtitle/actions/runs/32393355861) 全部通过。

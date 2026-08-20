@@ -52,4 +52,4 @@
 - [x] 审计输出、异常和固定响应，确认不存在 Cookie、签名 URL 或敏感响应正文。
 - [x] 审计直接运行时依赖和模块范围，确认没有提前实现认证、字幕或导出能力。
 - [x] 确认 feature spec、实现、测试和锁文件一致，且工作区没有混入无关改动。
-- [ ] 提交并推送 feature 分支，确认 Windows GitHub Actions 的全部质量检查通过。
+- [x] 提交并推送 feature 分支，确认 Windows GitHub Actions 的全部质量检查通过。

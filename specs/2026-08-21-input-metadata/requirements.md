@@ -7,7 +7,7 @@
 | Feature | Input and Metadata |
 | 工作分支 | `feature/input-metadata` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 已实现，待 CI 验证 |
+| 状态 | 已完成 |
 | 日期 | 2026-08-21 |
 
 ## 背景与目标
