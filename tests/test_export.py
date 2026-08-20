@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import bili_subtitle.infrastructure.export as export_module
 from bili_subtitle.domain.errors import ExportError
 from bili_subtitle.domain.models import (
     SubtitleBody,
@@ -93,6 +94,38 @@ def test_text_encoding_failure_is_export_error_before_any_publication(tmp_path: 
             page=page,
             track=SubtitleTrack(1, "x", "x", SubtitleTrackKind.HUMAN),
             body=body,
+        )
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("failure_point", ["create", "flush"])
+def test_temporary_publication_failures_are_cleaned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_point: str
+) -> None:
+    if failure_point == "create":
+
+        def fail_create(*args: object, **kwargs: object) -> tuple[int, str]:
+            del args, kwargs
+            raise OSError("injected create failure")
+
+        monkeypatch.setattr(export_module.tempfile, "mkstemp", fail_create)
+    else:
+
+        def fail_flush(descriptor: int) -> None:
+            del descriptor
+            raise OSError("injected flush failure")
+
+        monkeypatch.setattr(export_module.os, "fsync", fail_flush)
+
+    page = VideoPage(1, 88, "p")
+    with pytest.raises(ExportError):
+        export_single_track(
+            output_dir=tmp_path,
+            basename="x",
+            video=VideoMetadata(7, "BV1xx411c7mD", "v", (page,)),
+            page=page,
+            track=SubtitleTrack(1, "x", "x", SubtitleTrackKind.HUMAN),
+            body=SubtitleBody(b"new", ()),
         )
     assert not list(tmp_path.iterdir())
 
