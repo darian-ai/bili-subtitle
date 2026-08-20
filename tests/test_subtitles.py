@@ -83,6 +83,7 @@ def test_legal_no_subtitles(subtitle: object) -> None:
         "https://evil.test/x",
         "https://u:p@aisubtitle.hdslb.com/x",
         "https://aisubtitle.hdslb.com:444/x",
+        "https://aisubtitle.hdslb.com:bad/x",
     ],
 )
 def test_rejects_unsafe_url_without_leaking(url: str) -> None:

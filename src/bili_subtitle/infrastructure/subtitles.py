@@ -81,7 +81,9 @@ class BilibiliSubtitleAdapter:
         try:
             decoded = raw.decode("utf-8")
             payload = json.loads(
-                decoded, parse_constant=lambda _value: (_ for _ in ()).throw(ValueError())
+                decoded,
+                parse_float=Decimal,
+                parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
             )
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise SubtitlePlatformResponseError("字幕正文不是有效 JSON。") from exc
@@ -96,8 +98,8 @@ class BilibiliSubtitleAdapter:
     def _get(self, url: str, *, params: dict[str, str | int] | None = None) -> httpx.Response:
         try:
             response = self._client.get(url, params=params)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            raise SubtitleNetworkError("字幕网络访问失败。") from exc
+        except (httpx.TimeoutException, httpx.NetworkError):
+            raise SubtitleNetworkError("字幕网络访问失败。") from None
         if response.status_code == 401:
             raise AuthenticationRequired("需要登录后访问字幕。")
         if response.status_code == 403:
@@ -153,11 +155,15 @@ def _safe_subtitle_url(value: str) -> str:
     candidate = f"https:{value}" if value.startswith("//") else value
     parts = urlsplit(candidate)
     host = (parts.hostname or "").lower()
+    try:
+        port = parts.port
+    except ValueError:
+        raise SubtitlePlatformResponseError("平台返回了不安全的字幕地址。") from None
     if (
         parts.scheme != "https"
         or parts.username is not None
         or parts.password is not None
-        or parts.port not in {None, 443}
+        or port not in {None, 443}
         or not any(host == suffix[1:] or host.endswith(suffix) for suffix in _TRUSTED_SUFFIXES)
     ):
         raise SubtitlePlatformResponseError("平台返回了不安全的字幕地址。")
@@ -172,12 +178,12 @@ def _parse_cue(raw: object) -> SubtitleCue:
     if (
         isinstance(start, bool)
         or isinstance(end, bool)
-        or not isinstance(start, (int, float))
-        or not isinstance(end, (int, float))
+        or not isinstance(start, (int, Decimal))
+        or not isinstance(end, (int, Decimal))
         or not isinstance(text, str)
     ):
         raise SubtitlePlatformResponseError("字幕片段字段缺失或类型错误。")
-    if not math.isfinite(float(start)) or not math.isfinite(float(end)):
+    if not math.isfinite(start) or not math.isfinite(end):
         raise SubtitlePlatformResponseError("字幕片段时间无效。")
     try:
         return SubtitleCue(Decimal(str(start)), Decimal(str(end)), text)
