@@ -21,7 +21,8 @@ class FakeSubtitles:
         assert (bvid, cid) == ("BV1xx411c7mD", 8)
         return (self.track,)
 
-    def download_selected(self, selected: SubtitleTrack) -> SubtitleBody:
+    def download_selected(self, *, bvid: str, cid: int, selected: SubtitleTrack) -> SubtitleBody:
+        assert (bvid, cid) == ("BV1xx411c7mD", 8)
         assert selected == self.track
         return SubtitleBody(b'{"body":[]}', ())
 

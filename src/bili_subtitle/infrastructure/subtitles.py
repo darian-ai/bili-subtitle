@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
@@ -28,15 +28,29 @@ _TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com", ".hdslb.com")
 @dataclass(frozen=True, slots=True)
 class _DiscoveredTrack:
     public: SubtitleTrack
-    url: str
+    url: str = field(repr=False)
 
 
 class BilibiliSubtitleAdapter:
     def __init__(self, client: httpx.Client) -> None:
         self._client = client
-        self._pending: tuple[_DiscoveredTrack, ...] = ()
 
     def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
+        return tuple(item.public for item in self._discover_private(bvid=bvid, cid=cid))
+
+    def download_selected(self, *, bvid: str, cid: int, selected: SubtitleTrack) -> SubtitleBody:
+        # Re-fetch the short-lived player response instead of retaining signed URLs
+        # between public calls.  Once the selected URL is obtained, consume it in
+        # this stack frame immediately and discard every private discovery value.
+        matches = [
+            item for item in self._discover_private(bvid=bvid, cid=cid) if item.public == selected
+        ]
+        if len(matches) != 1:
+            raise SubtitlePlatformResponseError("选定轨道不属于本次发现结果。")
+        response = self._get(_safe_subtitle_url(matches[0].url))
+        return _parse_body(response.content)
+
+    def _discover_private(self, *, bvid: str, cid: int) -> tuple[_DiscoveredTrack, ...]:
         response = self._get(_PLAYER_API, params={"bvid": bvid, "cid": cid})
         payload = _response_payload(response)
         code = payload.get("code")
@@ -51,7 +65,6 @@ class BilibiliSubtitleAdapter:
             raise SubtitlePlatformResponseError("字幕轨道响应结构异常。")
         subtitle = cast(Mapping[object, object], data).get("subtitle")
         if subtitle is None:
-            self._pending = ()
             raise NoSubtitles("该分集没有可见字幕。")
         if not isinstance(subtitle, Mapping):
             raise SubtitlePlatformResponseError("字幕轨道响应结构异常。")
@@ -59,35 +72,8 @@ class BilibiliSubtitleAdapter:
         if not isinstance(raw_tracks, list):
             raise SubtitlePlatformResponseError("字幕轨道列表结构异常。")
         if not raw_tracks:
-            self._pending = ()
             raise NoSubtitles("该分集没有可见字幕。")
-        parsed = tuple(_parse_track(item) for item in cast(list[object], raw_tracks))
-        self._pending = parsed
-        return tuple(item.public for item in parsed)
-
-    def download_selected(self, selected: SubtitleTrack) -> SubtitleBody:
-        matches = [item for item in self._pending if item.public == selected]
-        self._pending = ()
-        if len(matches) != 1:
-            raise SubtitlePlatformResponseError("选定轨道不属于本次发现结果。")
-        response = self._get(_safe_subtitle_url(matches[0].url))
-        raw = response.content
-        try:
-            decoded = raw.decode("utf-8")
-            payload = json.loads(
-                decoded,
-                parse_float=Decimal,
-                parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise SubtitlePlatformResponseError("字幕正文不是有效 JSON。") from exc
-        if not isinstance(payload, Mapping):
-            raise SubtitlePlatformResponseError("字幕正文结构异常。")
-        body = cast(Mapping[object, object], payload).get("body")
-        if not isinstance(body, list):
-            raise SubtitlePlatformResponseError("字幕正文缺少片段列表。")
-        cues = tuple(_parse_cue(item) for item in cast(list[object], body))
-        return SubtitleBody(raw, cues)
+        return tuple(_parse_track(item) for item in cast(list[object], raw_tracks))
 
     def _get(self, url: str, *, params: dict[str, str | int] | None = None) -> httpx.Response:
         try:
@@ -108,11 +94,32 @@ class BilibiliSubtitleAdapter:
 def _response_payload(response: httpx.Response) -> Mapping[str, object]:
     try:
         payload = cast(object, response.json())
-    except ValueError as exc:
-        raise SubtitlePlatformResponseError("字幕轨道响应不是有效 JSON。") from exc
+    except ValueError:
+        raise SubtitlePlatformResponseError("字幕轨道响应不是有效 JSON。") from None
     if not isinstance(payload, Mapping):
         raise SubtitlePlatformResponseError("字幕轨道响应结构异常。")
     return cast(Mapping[str, object], payload)
+
+
+def _parse_body(raw: bytes) -> SubtitleBody:
+    try:
+        decoded = raw.decode("utf-8")
+        payload = json.loads(
+            decoded,
+            parse_float=Decimal,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        # Parser exceptions can embed the source document.  Suppress their
+        # context so response content cannot escape via tracebacks or repr.
+        raise SubtitlePlatformResponseError("字幕正文不是有效 JSON。") from None
+    if not isinstance(payload, Mapping):
+        raise SubtitlePlatformResponseError("字幕正文结构异常。")
+    body = cast(Mapping[object, object], payload).get("body")
+    if not isinstance(body, list):
+        raise SubtitlePlatformResponseError("字幕正文缺少片段列表。")
+    cues = tuple(_parse_cue(item) for item in cast(list[object], body))
+    return SubtitleBody(raw, cues)
 
 
 def _parse_track(raw: object) -> _DiscoveredTrack:

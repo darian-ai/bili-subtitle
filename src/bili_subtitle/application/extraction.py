@@ -11,7 +11,9 @@ from bili_subtitle.domain.models import SubtitleBody, SubtitleTrack, VideoMetada
 
 class SubtitlePort(Protocol):
     def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]: ...
-    def download_selected(self, selected: SubtitleTrack) -> SubtitleBody: ...
+    def download_selected(
+        self, *, bvid: str, cid: int, selected: SubtitleTrack
+    ) -> SubtitleBody: ...
 
 
 class ExportPort(Protocol):
@@ -50,7 +52,7 @@ def extract_single_track(
 
         raise SubtitlePlatformResponseError("指定的字幕轨道不在本次发现结果中。")
     track = selected[0]
-    body = subtitles.download_selected(track)
+    body = subtitles.download_selected(bvid=video.bvid, cid=page.cid, selected=track)
     files = exporter(
         output_dir=output_dir, basename=basename, video=video, page=page, track=track, body=body
     )

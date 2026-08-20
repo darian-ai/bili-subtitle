@@ -64,6 +64,24 @@ def test_existing_target_is_not_overwritten_and_temp_is_cleaned(tmp_path: Path) 
     assert not list(tmp_path.glob("*.tmp"))
 
 
+@pytest.mark.parametrize("existing_name", ["x.srt", "manifest.json"])
+def test_any_existing_target_rejects_before_publication(tmp_path: Path, existing_name: str) -> None:
+    existing = tmp_path / existing_name
+    existing.write_bytes(b"old")
+    page = VideoPage(1, 88, "p")
+    with pytest.raises(ExportError):
+        export_single_track(
+            output_dir=tmp_path,
+            basename="x",
+            video=VideoMetadata(7, "BV1xx411c7mD", "v", (page,)),
+            page=page,
+            track=SubtitleTrack(1, "x", "x", SubtitleTrackKind.HUMAN),
+            body=SubtitleBody(b"new", ()),
+        )
+    assert existing.read_bytes() == b"old"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [existing_name]
+
+
 def test_manifest_failure_keeps_published_subtitles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

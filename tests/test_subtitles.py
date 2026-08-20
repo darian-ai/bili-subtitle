@@ -14,8 +14,6 @@ from bili_subtitle.domain.models import SubtitleTrackKind
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 
 SIGNED = "https://aisubtitle.hdslb.com/bfs/subtitle/fake.json?token=FAKE_SIGNATURE_CANARY"
-
-
 def _client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -59,10 +57,11 @@ def test_discovers_in_order_and_immediately_downloads_raw_bytes() -> None:
     tracks = adapter.discover(bvid="BV1xx411c7mD", cid=1)
     assert [x.track_id for x in tracks] == [8, 9]
     assert tracks[1].kind is SubtitleTrackKind.AI
-    body = adapter.download_selected(tracks[1])
+    assert SIGNED not in repr(adapter.__dict__)
+    body = adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=tracks[1])
     assert body.raw_json == raw
     assert body.cues[0].text == "  中文\nline "
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert SIGNED not in repr(tracks) + repr(body)
 
 
@@ -112,7 +111,7 @@ def test_rejects_unsafe_url_without_leaking(url: str) -> None:
     )
     track = adapter.discover(bvid="BV1xx411c7mD", cid=1)[0]
     with pytest.raises(SubtitlePlatformResponseError) as caught:
-        adapter.download_selected(track)
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=track)
     assert url not in str(caught.value)
 
 
@@ -185,5 +184,6 @@ def test_malformed_body_is_classified_without_raw_content(body: bytes) -> None:
     adapter = BilibiliSubtitleAdapter(_client(handler))
     selected = adapter.discover(bvid="BV1xx411c7mD", cid=1)[0]
     with pytest.raises(SubtitlePlatformResponseError) as caught:
-        adapter.download_selected(selected)
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=selected)
     assert body.decode(errors="ignore") not in str(caught.value)
+    assert body.decode(errors="ignore") not in repr(caught.value.__context__)

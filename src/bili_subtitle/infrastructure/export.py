@@ -42,10 +42,17 @@ def export_single_track(
     track: SubtitleTrack,
     body: SubtitleBody,
 ) -> tuple[Path, Path, Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / f"{basename}.json"
     srt_path = output_dir / f"{basename}.srt"
     manifest_path = output_dir / "manifest.json"
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ExportError("无法创建字幕输出目录。") from exc
+    # Reject the complete operation before publishing anything.  Phase four
+    # deliberately has no overwrite, skip, or missing-file repair semantics.
+    if any(path.exists() for path in (json_path, srt_path, manifest_path)):
+        raise ExportError("字幕输出目标已经存在。")
     _publish_new(json_path, body.raw_json)
     _publish_new(srt_path, render_srt(body.cues).encode("utf-8"))
     manifest = {
