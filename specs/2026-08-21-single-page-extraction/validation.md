@@ -130,3 +130,19 @@ uv run pyright
 ## 验证记录约束
 
 后续记录只允许包含环境、命令、测试数量、覆盖率、脱敏场景状态和 CI 链接。不得记录真实账号、Cookie、二维码、签名 URL、请求头或平台响应正文；若真实网络意外发生，相关数据不得进入仓库或测试诊断。
+
+## 2026-08-21 本地验证记录
+
+- 环境：Windows、Python 3.14.2；全部字幕场景使用脱敏 HTTP 固定响应与 pytest 临时目录，
+  未访问真实网络、真实账号或 Credential Manager。
+- `uv sync --locked --dev`：通过，锁文件与依赖一致。
+- `uv run pytest`：136 passed，分支覆盖率 92.13%，阶段一至三回归全部通过。
+- `uv run ruff check .`、`uv run ruff format --check .`、`uv run pyright`：全部通过，
+  Pyright 为 0 errors。
+- 离线闭环：人工/AI 轨道、同语言多轨道顺序、合法无字幕、鉴权、权限、网络、
+  结构异常、原始 JSON 字节、忠实 SRT、原子发布、已有目标拒绝及 manifest 最后失败均通过。
+- Windows 临时目录检查：JSON 字节、UTF-8 SRT、相对文件名 manifest、故障后临时文件清理通过。
+- 安全与范围审计：领域/应用结果、异常、manifest 与文件名不含伪签名地址；源码与依赖中
+  未发现媒体下载、ASR、OCR、翻译、WBI、私有接口或访问控制绕过；公开 CLI 行为未改变，
+  未提前加入阶段五编排参数与策略。
+- 待验收：推送 feature 分支后运行 Windows GitHub Actions；不得在本记录伪造 CI 结果。
