@@ -15,7 +15,7 @@ from bili_subtitle.domain.models import (
     VideoMetadata,
     VideoPage,
 )
-from bili_subtitle.infrastructure.export import plan_output_paths
+from bili_subtitle.infrastructure.export import plan_output_paths, sanitize_component
 
 
 def _selection() -> PageSelection:
@@ -42,6 +42,41 @@ def test_path_planner_is_windows_safe_unique_and_bounded(tmp_path: Path) -> None
         len(str(path.resolve())) + 40 <= 240 for p in plans for path in (p.json_path, p.srt_path)
     )
     assert all(not any(char in p.basename for char in '<>:"/\\|?*') for p in plans)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("CON", "_CON"),
+        ("prn.txt", "_prn.txt"),
+        ("COM9", "_COM9"),
+        ("lpt1.log", "_lpt1.log"),
+        ("name. ", "name"),
+        ('<>:"/\\|?*\x00', "__________"),
+        (" . ", "untitled"),
+    ],
+)
+def test_sanitize_component_covers_windows_edge_cases(source: str, expected: str) -> None:
+    assert sanitize_component(source) == expected
+
+
+def test_collision_resolution_is_stable_when_track_order_changes(tmp_path: Path) -> None:
+    page = VideoPage(1, 1, "page")
+    tracks = (
+        SubtitleTrack(1, "a:b", "one", SubtitleTrackKind.HUMAN),
+        SubtitleTrack(1, "a?b", "two", SubtitleTrackKind.AI),
+    )
+    video = VideoMetadata(1, "BV1xx411c7mD", "video", (page,))
+    _, forward = plan_output_paths(cwd=tmp_path, video=video, page=page, tracks=tracks)
+    _, reverse = plan_output_paths(cwd=tmp_path, video=video, page=page, tracks=tracks[::-1])
+    by_language = {
+        track.language: plan.basename for track, plan in zip(tracks, forward, strict=True)
+    }
+    reverse_by_language = {
+        track.language: plan.basename for track, plan in zip(tracks[::-1], reverse, strict=True)
+    }
+    assert by_language == reverse_by_language
+    assert len({name.casefold() for name in by_language.values()}) == 2
 
 
 class Subtitles:
@@ -201,13 +236,25 @@ def test_no_match_missing_repair_force_and_manifest_failure(
     )
     track = first.pages[0].tracks[0]
     root = next((tmp_path / "subtitles").iterdir())
-    assert track.srt_file is not None
-    (root / track.srt_file).unlink()
+    assert track.json_file is not None and track.srt_file is not None
+    json_path = root / track.json_file
+    srt_path = root / track.srt_file
+    original_json = json_path.read_bytes()
+    srt_path.unlink()
     repaired = run_extraction(
         selection=_selection(), languages=("en-US",), force=False, cwd=tmp_path, subtitles=subtitles
     )
     assert repaired.pages[0].tracks[0].json_action == "skipped"
     assert repaired.pages[0].tracks[0].srt_action == "written"
+    assert json_path.read_bytes() == original_json
+    original_srt = srt_path.read_bytes()
+    json_path.unlink()
+    repaired_json = run_extraction(
+        selection=_selection(), languages=("en-US",), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+    assert repaired_json.pages[0].tracks[0].json_action == "written"
+    assert repaired_json.pages[0].tracks[0].srt_action == "skipped"
+    assert srt_path.read_bytes() == original_srt
     forced = run_extraction(
         selection=_selection(), languages=("en-US",), force=True, cwd=tmp_path, subtitles=subtitles
     )

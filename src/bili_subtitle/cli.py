@@ -133,9 +133,11 @@ def _render_flow(result: FlowResult) -> None:
             skipped += sum(action == "skipped" for action in (track.json_action, track.srt_action))
             typer.echo(f"P{page.page.number:02d} 轨道 {track.track.track_id}：完成")
     failed += int(result.manifest_failed)
+    all_skipped = tracks > 0 and failed == 0 and skipped == tracks * 2
+    completion = "（全部已有文件跳过）" if all_skipped else ""
     typer.echo(
         f"摘要：分集 {len(result.pages)}，轨道 {tracks}，写入 {written}，覆盖 {replaced}，"
-        f"跳过 {skipped}，无字幕 {no_subtitles}，无匹配 {no_match}，失败 {failed}。"
+        f"跳过 {skipped}，无字幕 {no_subtitles}，无匹配 {no_match}，失败 {failed}。{completion}"
     )
 
 

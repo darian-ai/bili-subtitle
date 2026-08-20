@@ -127,6 +127,31 @@ def test_render_flow_classifications() -> None:
     cli._render_flow(result)  # pyright: ignore[reportPrivateUsage]
 
 
+def test_render_flow_explicitly_labels_all_skipped(capsys: pytest.CaptureFixture[str]) -> None:
+    page = VideoPage(1, 1, "x")
+    track = SubtitleTrack(1, "zh-CN", "x", SubtitleTrackKind.HUMAN)
+    cli._render_flow(  # pyright: ignore[reportPrivateUsage]
+        FlowResult(
+            (
+                PageResult(
+                    page,
+                    "success",
+                    (
+                        TrackResult(
+                            track,
+                            "success",
+                            json_action="skipped",
+                            srt_action="skipped",
+                        ),
+                    ),
+                ),
+            ),
+            False,
+        )
+    )
+    assert "全部已有文件跳过" in capsys.readouterr().out
+
+
 def test_auth_help_lists_commands() -> None:
     result = runner.invoke(cli.auth_app, ["--help"])
 
