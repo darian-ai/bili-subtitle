@@ -7,7 +7,7 @@
 | Feature | Secure Authentication |
 | 工作分支 | `feature/secure-auth` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 计划中 |
+| 状态 | 实现及本地自动化验证完成；待真实 Credential Manager、人工扫码与 Windows CI 验收 |
 | 日期 | 2026-08-21 |
 
 ## 背景与目标

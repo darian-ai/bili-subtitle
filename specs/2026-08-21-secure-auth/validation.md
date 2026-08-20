@@ -1,5 +1,18 @@
 # 阶段三：安全登录验证及合并标准
 
+## 2026-08-21 本地验证记录
+
+| 检查 | 结果 |
+|---|---|
+| `uv sync --locked --dev` | 通过 |
+| `uv run pytest` | 通过：99 项测试，分支覆盖率 90.54% |
+| `uv run ruff check .` | 通过 |
+| `uv run ruff format --check .` | 通过 |
+| `uv run pyright` | 通过：0 errors |
+| 默认测试隔离 | 使用 MockTransport、respx、内存存储及 monkeypatch；未访问真实网络、真实 Credential Manager，未真实等待 |
+
+未执行项：真实 Windows Credential Manager 专用测试槽位、真实账号扫码及二维码过期/取消人工流程、远端 Windows GitHub Actions。未伪造这些外部结果，合并前仍须完成或由维护者明确接受。
+
 ## 自动化验证
 
 在仓库根目录依次运行：
