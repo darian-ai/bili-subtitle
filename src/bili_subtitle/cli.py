@@ -1,4 +1,4 @@
-"""命令行入口与阶段一占位行为。"""
+"""命令行入口。"""
 
 from __future__ import annotations
 
@@ -7,11 +7,14 @@ from typing import Annotated
 
 import typer
 
+from bili_subtitle.application.auth import login
 from bili_subtitle.application.metadata import resolve_selection
 from bili_subtitle.domain import MetadataError
+from bili_subtitle.domain.auth import CredentialState, LoginState
+from bili_subtitle.infrastructure.auth import BilibiliAuthAdapter
 from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, create_http_client
-
-_NOT_IMPLEMENTED = "该功能尚未实现；当前版本仅提供阶段一项目骨架。"
+from bili_subtitle.infrastructure.credentials import CredentialStoreError, KeyringCredentialStore
+from bili_subtitle.infrastructure.terminal_qr import render_qr
 
 extract_app = typer.Typer(
     add_completion=False,
@@ -24,11 +27,6 @@ auth_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode=None,
 )
-
-
-def _not_implemented() -> None:
-    typer.echo(_NOT_IMPLEMENTED, err=True)
-    raise typer.Exit(code=2)
 
 
 @extract_app.command(
@@ -67,16 +65,29 @@ def extract(
     if page is not None and all_pages:
         raise typer.BadParameter("--page 与 --all-pages 不能同时使用。")
 
+    store = KeyringCredentialStore()
     try:
         with create_http_client() as client:
+            auth = BilibiliAuthAdapter(client)
+            outcome = login(store, auth, render_qr, typer.echo)
+            if (
+                outcome.state not in {LoginState.VALID, LoginState.SUCCESS}
+                or outcome.credential is None
+            ):
+                typer.echo(f"错误：{outcome.message}", err=True)
+                raise typer.Exit(code=2)
+            auth.apply(outcome.credential)
             selection = resolve_selection(
                 video,
                 page=page,
                 all_pages=all_pages,
                 metadata=BilibiliMetadataAdapter(client),
             )
-    except MetadataError as exc:
+    except (MetadataError, CredentialStoreError) as exc:
         typer.echo(f"错误：{exc}", err=True)
+        raise typer.Exit(code=2) from None
+    except KeyboardInterrupt:
+        typer.echo("错误：登录已取消。", err=True)
         raise typer.Exit(code=2) from None
 
     for notice in selection.notices:
@@ -97,19 +108,55 @@ def _terminal_safe(value: str) -> str:
 @auth_app.command("login")
 def auth_login() -> None:
     """通过终端二维码登录 Bilibili。"""
-    _not_implemented()
+    try:
+        with create_http_client() as client:
+            outcome = login(
+                KeyringCredentialStore(), BilibiliAuthAdapter(client), render_qr, typer.echo
+            )
+    except (MetadataError, CredentialStoreError) as exc:
+        typer.echo(f"错误：{exc}", err=True)
+        raise typer.Exit(code=2) from None
+    except KeyboardInterrupt:
+        typer.echo("错误：登录已取消。", err=True)
+        raise typer.Exit(code=2) from None
+    typer.echo(outcome.message, err=outcome.state not in {LoginState.VALID, LoginState.SUCCESS})
+    if outcome.state not in {LoginState.VALID, LoginState.SUCCESS}:
+        raise typer.Exit(code=2)
 
 
 @auth_app.command("status")
 def auth_status() -> None:
     """检查已保存登录状态是否有效。"""
-    _not_implemented()
+    try:
+        stored = KeyringCredentialStore().read()
+        if stored.state is CredentialState.MISSING:
+            typer.echo("未登录。")
+            raise typer.Exit(code=1)
+        if stored.state is CredentialState.INVALID or stored.credential is None:
+            typer.echo("凭据无效。")
+            raise typer.Exit(code=1)
+        with create_http_client() as client:
+            status = BilibiliAuthAdapter(client).check(stored.credential)
+    except (MetadataError, CredentialStoreError) as exc:
+        typer.echo(f"错误：{exc}", err=True)
+        raise typer.Exit(code=2) from None
+    if status.state is LoginState.VALID:
+        suffix = f"（{_terminal_safe(status.display_name)}）" if status.display_name else ""
+        typer.echo(f"已登录{suffix}。")
+        return
+    typer.echo("登录已失效。")
+    raise typer.Exit(code=1)
 
 
 @auth_app.command("clear")
 def auth_clear() -> None:
     """清除已保存的 Bilibili 登录凭据。"""
-    _not_implemented()
+    try:
+        removed = KeyringCredentialStore().clear()
+    except CredentialStoreError as exc:
+        typer.echo(f"错误：{exc}", err=True)
+        raise typer.Exit(code=2) from None
+    typer.echo("凭据已清除。" if removed else "当前没有已保存凭据。")
 
 
 def main() -> None:

@@ -7,10 +7,30 @@ import pytest
 from typer.testing import CliRunner
 
 from bili_subtitle import cli
+from bili_subtitle.application.auth import AuthOutcome
 from bili_subtitle.domain import PageSelection, SelectionSource, VideoMetadata, VideoPage
+from bili_subtitle.domain.auth import (
+    CredentialRead,
+    CredentialState,
+    LoginState,
+    LoginStatus,
+    SessionCredential,
+)
 from bili_subtitle.domain.errors import InputError
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_login(*args: object, **kwargs: object) -> AuthOutcome:
+        return AuthOutcome(LoginState.VALID, "已经登录。", SessionCredential({"fake": "cookie"}))
+
+    monkeypatch.setattr(
+        cli,
+        "login",
+        fake_login,
+    )
 
 
 def test_root_help_describes_full_contract() -> None:
@@ -85,12 +105,80 @@ def test_auth_help_lists_commands() -> None:
         assert command in result.output
 
 
-@pytest.mark.parametrize("command", ["login", "status", "clear"])
-def test_auth_placeholders_fail_explicitly(command: str) -> None:
-    result = runner.invoke(cli.auth_app, [command])
+def test_auth_login_reports_success() -> None:
+    result = runner.invoke(cli.auth_app, ["login"])
+    assert result.exit_code == 0
+    assert "已经登录" in result.output
 
+
+def test_auth_login_maps_terminal_failure_to_operation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def expired(*args: object, **kwargs: object) -> AuthOutcome:
+        return AuthOutcome(LoginState.EXPIRED, "二维码已过期。")
+
+    monkeypatch.setattr(cli, "login", expired)
+    result = runner.invoke(cli.auth_app, ["login"])
     assert result.exit_code == 2
-    assert "尚未实现" in result.output
+    assert "二维码已过期" in result.stderr
+
+
+def test_auth_login_handles_ctrl_c_without_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def interrupt(*args: object, **kwargs: object) -> AuthOutcome:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "login", interrupt)
+    result = runner.invoke(cli.auth_app, ["login"])
+    assert result.exit_code == 2
+    assert "登录已取消" in result.stderr
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("read", "expected"),
+    [
+        (CredentialRead(CredentialState.MISSING), "未登录"),
+        (CredentialRead(CredentialState.INVALID), "凭据无效"),
+    ],
+)
+def test_auth_status_local_states(
+    monkeypatch: pytest.MonkeyPatch, read: CredentialRead, expected: str
+) -> None:
+    class Store:
+        def read(self) -> CredentialRead:
+            return read
+
+    monkeypatch.setattr(cli, "KeyringCredentialStore", Store)
+    result = runner.invoke(cli.auth_app, ["status"])
+    assert result.exit_code == 1 and expected in result.output
+
+
+def test_auth_status_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    credential = SessionCredential({"x": "y"})
+
+    class Store:
+        def read(self) -> CredentialRead:
+            return CredentialRead(CredentialState.FOUND, credential)
+
+    monkeypatch.setattr(cli, "KeyringCredentialStore", Store)
+
+    def check(self: object, value: object) -> LoginStatus:
+        return LoginStatus(LoginState.VALID, "用户\n名")
+
+    monkeypatch.setattr(cli.BilibiliAuthAdapter, "check", check)
+    result = runner.invoke(cli.auth_app, ["status"])
+    assert result.exit_code == 0 and "用户 名" in result.output
+
+
+@pytest.mark.parametrize(("removed", "text"), [(True, "已清除"), (False, "没有已保存")])
+def test_auth_clear(monkeypatch: pytest.MonkeyPatch, removed: bool, text: str) -> None:
+    class Store:
+        def clear(self) -> bool:
+            return removed
+
+    monkeypatch.setattr(cli, "KeyringCredentialStore", Store)
+    result = runner.invoke(cli.auth_app, ["clear"])
+    assert result.exit_code == 0 and text in result.output
 
 
 def test_main_dispatches_extract_arguments(
