@@ -139,3 +139,41 @@ uv tool install '<本地 wheel 绝对路径>'
 
 后续仅追加环境版本、命令形态、测试数量、覆盖率、脱敏场景、退出码、构建文件名/哈希、提交哈希和
 CI 链接。不得记录账号、Cookie、二维码、签名 URL、请求头、响应正文、字幕正文或真实投稿标识。
+
+## 2026-08-21 自动化实施记录
+
+当前状态：自动化、文档、构建、隔离安装及审计已完成；真实 AI 字幕与多分集投稿人工验收、待合并提交的 Windows CI 尚未完成，因此不得声称阶段六或 V1 完成。
+
+### 契约—测试追踪矩阵
+
+| 领域 | 直接证据 |
+|---|---|
+| 输入 | `test_parse_supported_inputs`、`test_parse_short_url`、`test_default_selects_all_pages`、`test_url_page_selects_one`、`test_explicit_selection_overrides_url_page`、`test_invalid_page_and_mutual_exclusion` |
+| 认证 | `test_credential_rejects_invalid`、`test_login_reuses_valid_credential`、`test_login_state_sequence_saves_without_leaks`、`test_login_terminal_states_do_not_save`、`test_login_times_out_with_fake_clock`、`test_login_retries_transient_network_errors_within_limit`、`test_keyring_store_paths`、`test_auth_login_handles_ctrl_c_without_traceback` |
+| 字幕 | `test_ai_track_full_http_to_files_integration`、`test_discovers_in_order_and_immediately_downloads_raw_bytes`、`test_legal_no_subtitles`、`test_http_failures_have_stable_classification`、`test_platform_codes_have_stable_classification`、`test_malformed_discovery_is_not_no_subtitles`、`test_malformed_body_is_classified_without_raw_content`、`test_protocol_relative_url_is_https_and_consumed_without_retention` |
+| 导出 | `test_export_preserves_raw_json_and_publishes_manifest_last`、`test_srt_round_half_up_and_preserves_order_and_text`、`test_any_existing_target_rejects_before_publication`、`test_temporary_publication_failures_are_cleaned`、`test_manifest_failure_keeps_published_subtitles` |
+| 完整流程 | `test_full_flow_filters_in_platform_order_and_skips_existing`、`test_track_failure_isolated_and_exit_codes`、`test_no_match_missing_repair_force_and_manifest_failure`、`test_second_replace_failure_preserves_first_and_records_partial_publish`、CLI 摘要和错误映射测试 |
+| Windows | `test_sanitize_component_covers_windows_edge_cases`、`test_collision_resolution_is_stable_when_track_order_changes`、路径预算三项测试、隔离安装脚本的新 PowerShell 仓库外调用 |
+| 安全与交付 | 认证/字幕适配器的秘密泄漏测试、`test_committed_delivery_files_do_not_contain_secret_canaries`、归档校验器测试、`scripts/verify_release.py` |
+
+### 本地门禁与交付证据
+
+- 环境：Windows，CPython 3.12.13，uv 锁定环境。
+- `uv sync --locked --dev`、`uv run pytest`、Ruff lint、Ruff format check、strict Pyright、`git diff --check` 均返回 `0`。
+- pytest：187 项通过；总覆盖率 91.94%，满足分支覆盖门槛；测试使用固定响应、假凭据端口和假时钟。
+- `uv build` 从本地源码生成且仅生成 `bili_subtitle-0.1.0-py3-none-any.whl` 与 `bili_subtitle-0.1.0.tar.gz`；`scripts/verify_release.py` 校验包、入口、Python 要求、直接依赖、README、三份 Constitution 和禁止文件，返回 `0`。
+- `scripts/verify_isolated_install.ps1` 将两个 uv 目录限定到经绝对路径确认的临时根，从本地 wheel 安装，并在仓库外工作目录的新 PowerShell 进程仅通过隔离 PATH 调用 `bili-subtitle --help`，返回 `0`；脚本只清理自己创建的临时根，未查询或修改用户默认工具状态。
+- Windows CI 已扩展为在原有门禁后执行构建、归档校验及隔离安装；推送后的 run 证据待补。
+
+### 依赖、架构与禁止能力审计
+
+- `pyproject.toml`、`uv.lock`、`uv tree --locked` 和两类归档元数据一致。五个直接运行时依赖用途分别为：HTTPX 平台 HTTP，keyring Credential Manager，qrcode 终端二维码，Rich 终端呈现，Typer CLI；其传递依赖仅服务这些调用和 Windows 凭据后端。
+- 领域层只导入标准库；平台网络位于 infrastructure，凭据边界位于 credentials/auth，字幕文件写入位于 export；CLI 只装配并呈现结果。
+- 对源码、测试、脚本、CI、README、配置、锁文件和归档的关键词及调用路径审计未发现媒体/音频/封面下载、FFmpeg、ASR、OCR、翻译、浏览器自动化、WBI、APP 私有接口、访问控制绕过、异步框架、任务队列、数据库或插件系统。命中项均为 Constitution 禁止描述、测试中的字幕正文下载方法名或开发工具自身依赖，并不形成禁止能力。
+- 未生成 EXE，未发布包索引或 Release，未加入自动更新；交付边界仍为标准 wheel/sdist 和本地 `uv tool install`。
+
+### 待完成证据
+
+- 使用真实平台正常权限对一个含 AI 字幕的普通 UGC 投稿完成人工端到端与 JSON/SRT 忠实性抽查。
+- 使用真实普通多分集 UGC 投稿验证默认全部、`--page N`、重复跳过、`--force`、身份、摘要及退出码。
+- 在待合并提交上取得扩展后的 Windows CI 成功 run，并补充链接和提交哈希。
