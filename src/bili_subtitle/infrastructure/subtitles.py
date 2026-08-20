@@ -19,16 +19,10 @@ from bili_subtitle.domain.errors import (
     SubtitleNetworkError,
     SubtitlePlatformResponseError,
 )
-from bili_subtitle.domain.models import SubtitleCue, SubtitleTrack, SubtitleTrackKind
+from bili_subtitle.domain.models import SubtitleBody, SubtitleCue, SubtitleTrack, SubtitleTrackKind
 
 _PLAYER_API = "https://api.bilibili.com/x/player/v2"
 _TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com", ".hdslb.com")
-
-
-@dataclass(frozen=True, slots=True)
-class SubtitleBody:
-    raw_json: bytes
-    cues: tuple[SubtitleCue, ...]
 
 
 @dataclass(frozen=True, slots=True)

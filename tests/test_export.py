@@ -1,4 +1,5 @@
 import json
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pytest
 
 from bili_subtitle.domain.errors import ExportError
 from bili_subtitle.domain.models import (
+    SubtitleBody,
     SubtitleCue,
     SubtitleTrack,
     SubtitleTrackKind,
@@ -13,7 +15,6 @@ from bili_subtitle.domain.models import (
     VideoPage,
 )
 from bili_subtitle.infrastructure.export import export_single_track, render_srt
-from bili_subtitle.infrastructure.subtitles import SubtitleBody
 
 
 def test_srt_round_half_up_and_preserves_order_and_text() -> None:
@@ -60,4 +61,34 @@ def test_existing_target_is_not_overwritten_and_temp_is_cleaned(tmp_path: Path) 
             body=SubtitleBody(b"new", ()),
         )
     assert target.read_bytes() == b"old"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_manifest_failure_keeps_published_subtitles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_link = os.link
+    calls = 0
+
+    def fail_manifest(source: os.PathLike[str], target: os.PathLike[str]) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("injected")
+        real_link(source, target)
+
+    monkeypatch.setattr(os, "link", fail_manifest)
+    page = VideoPage(1, 88, "p")
+    with pytest.raises(ExportError):
+        export_single_track(
+            output_dir=tmp_path,
+            basename="x",
+            video=VideoMetadata(7, "BV1xx411c7mD", "v", (page,)),
+            page=page,
+            track=SubtitleTrack(1, "x", "x", SubtitleTrackKind.HUMAN),
+            body=SubtitleBody(b"{}", ()),
+        )
+    assert (tmp_path / "x.json").exists()
+    assert (tmp_path / "x.srt").exists()
+    assert not (tmp_path / "manifest.json").exists()
     assert not list(tmp_path.glob("*.tmp"))

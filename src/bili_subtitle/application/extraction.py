@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from bili_subtitle.domain.models import SubtitleTrack, VideoMetadata, VideoPage
-from bili_subtitle.infrastructure.subtitles import SubtitleBody
+from bili_subtitle.domain.models import SubtitleBody, SubtitleTrack, VideoMetadata, VideoPage
 
 
 class SubtitlePort(Protocol):

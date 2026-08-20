@@ -97,3 +97,11 @@ class SubtitleCue:
             or self.end < self.start
         ):
             raise SubtitlePlatformResponseError("平台返回了无效的字幕时间。")
+
+
+@dataclass(frozen=True, slots=True)
+class SubtitleBody:
+    """同一次正文响应的原始字节与已校验片段。"""
+
+    raw_json: bytes
+    cues: tuple[SubtitleCue, ...]

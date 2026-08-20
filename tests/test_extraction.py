@@ -4,9 +4,14 @@ import pytest
 
 from bili_subtitle.application.extraction import extract_single_track
 from bili_subtitle.domain.errors import SubtitlePlatformResponseError
-from bili_subtitle.domain.models import SubtitleTrack, SubtitleTrackKind, VideoMetadata, VideoPage
+from bili_subtitle.domain.models import (
+    SubtitleBody,
+    SubtitleTrack,
+    SubtitleTrackKind,
+    VideoMetadata,
+    VideoPage,
+)
 from bili_subtitle.infrastructure.export import export_single_track
-from bili_subtitle.infrastructure.subtitles import SubtitleBody
 
 
 class FakeSubtitles:
