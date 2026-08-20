@@ -1,0 +1,7 @@
+interface:
+  display_name: "更新 CHANGELOG"
+  short_description: "合并前以简体中文创建或更新按日期组织的 CHANGELOG"
+  default_prompt: "使用 $update-changelog 在合并前更新项目根目录的 CHANGELOG.md。"
+
+policy:
+  allow_implicit_invocation: false
