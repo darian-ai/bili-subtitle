@@ -7,7 +7,7 @@
 | Feature | Project Skeleton |
 | 工作分支 | `feature/project-skeleton` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 已实现，本地验证通过，待 CI 验证 |
+| 状态 | 已完成 |
 | 日期 | 2026-08-20 |
 
 ## 背景与目标

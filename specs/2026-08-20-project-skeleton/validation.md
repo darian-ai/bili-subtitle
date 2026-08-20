@@ -51,4 +51,4 @@ uv run pyright
 - console script、模块入口和认证帮助均返回 `0`。
 - 提取占位调用返回 `2`，并输出明确的未实现提示。
 - 直接运行时依赖仅为 Typer 和 Rich。
-- GitHub Actions 尚待仓库配置远程并推送后验证。
+- Windows GitHub Actions [`Quality` run 32349507638](https://github.com/darian-ai/bili-subtitle/actions/runs/32349507638) 全部通过。
