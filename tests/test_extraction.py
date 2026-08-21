@@ -28,6 +28,9 @@ class FakeSubtitles:
         assert selected == self.track
         return SubtitleBody(b'{"body":[]}', ())
 
+    def discard_pending(self, *, bvid: str, cid: int) -> None:
+        del bvid, cid
+
 
 def test_offline_single_page_single_track_loop(tmp_path: Path) -> None:
     page = VideoPage(1, 8, "p")

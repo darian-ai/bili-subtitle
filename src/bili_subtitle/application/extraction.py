@@ -14,6 +14,7 @@ class SubtitlePort(Protocol):
     def download_selected(
         self, *, bvid: str, cid: int, selected: SubtitleTrack
     ) -> SubtitleBody: ...
+    def discard_pending(self, *, bvid: str, cid: int) -> None: ...
 
 
 class ExportPort(Protocol):
@@ -45,15 +46,23 @@ def extract_single_track(
     subtitles: SubtitlePort,
     exporter: ExportPort,
 ) -> ExtractionSuccess:
-    tracks = subtitles.discover(bvid=video.bvid, cid=page.cid)
-    selected = tuple(track for track in tracks if track.track_id == track_id)
-    if len(selected) != 1:
-        from bili_subtitle.domain.errors import SubtitlePlatformResponseError
+    try:
+        tracks = subtitles.discover(bvid=video.bvid, cid=page.cid)
+        selected = tuple(track for track in tracks if track.track_id == track_id)
+        if len(selected) != 1:
+            from bili_subtitle.domain.errors import SubtitlePlatformResponseError
 
-        raise SubtitlePlatformResponseError("指定的字幕轨道不在本次发现结果中。")
-    track = selected[0]
-    body = subtitles.download_selected(bvid=video.bvid, cid=page.cid, selected=track)
-    files = exporter(
-        output_dir=output_dir, basename=basename, video=video, page=page, track=track, body=body
-    )
-    return ExtractionSuccess(track, files)
+            raise SubtitlePlatformResponseError("指定的字幕轨道不在本次发现结果中。")
+        track = selected[0]
+        body = subtitles.download_selected(bvid=video.bvid, cid=page.cid, selected=track)
+        files = exporter(
+            output_dir=output_dir,
+            basename=basename,
+            video=video,
+            page=page,
+            track=track,
+            body=body,
+        )
+        return ExtractionSuccess(track, files)
+    finally:
+        subtitles.discard_pending(bvid=video.bvid, cid=page.cid)

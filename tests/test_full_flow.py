@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -178,6 +179,9 @@ class Subtitles:
         self.downloads.append(selected.track_id)
         return SubtitleBody(b'{"body":[]}', ())
 
+    def discard_pending(self, *, bvid: str, cid: int) -> None:
+        del bvid, cid
+
 
 def test_full_flow_filters_in_platform_order_and_skips_existing(tmp_path: Path) -> None:
     subtitles = Subtitles()
@@ -233,6 +237,41 @@ def test_rotating_platform_track_id_reuses_unambiguous_manifest_paths(tmp_path: 
     assert len(tuple(output.glob("*.srt"))) == 1
 
 
+def test_rotating_same_language_tracks_never_guess_or_overwrite(tmp_path: Path) -> None:
+    class RotatingPair(Subtitles):
+        def __init__(self) -> None:
+            super().__init__()
+            self.run = 0
+
+        def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
+            del bvid, cid
+            self.run += 1
+            offset = self.run * 100
+            return (
+                SubtitleTrack(offset + 1, "zh-CN", "variable-a", SubtitleTrackKind.AI),
+                SubtitleTrack(offset + 2, "zh-CN", "variable-b", SubtitleTrackKind.HUMAN),
+            )
+
+    selection = PageSelection(
+        _selection().video, (_selection().pages[0],), SelectionSource.EXPLICIT_PAGE
+    )
+    subtitles = RotatingPair()
+    first = run_extraction(
+        selection=selection, languages=(), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+    second = run_extraction(
+        selection=selection, languages=(), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+
+    assert all(item.json_action == "written" for item in first.pages[0].tracks)
+    assert all(item.json_action == "written" for item in second.pages[0].tracks)
+    output = next((tmp_path / "subtitles").iterdir())
+    assert len(tuple(output.glob("*.json"))) == 5  # four bodies plus manifest
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert len(manifest["path_history"]) == 4
+    assert len({item["json_file"] for item in manifest["path_history"]}) == 4
+
+
 def test_manifest_path_reuse_rejects_parent_traversal(tmp_path: Path) -> None:
     page = VideoPage(1, 11, "one")
     track = SubtitleTrack(2, "zh-CN", "stable", SubtitleTrackKind.AI)
@@ -283,6 +322,39 @@ def test_path_history_survives_temporarily_unavailable_track(tmp_path: Path) -> 
     assert absent.pages[0].status == "no_subtitles"
     assert restored.pages[0].tracks[0].json_action == "skipped"
     assert len(subtitles.downloads) == 1
+
+
+def test_path_history_survives_manifest_snapshot_for_another_page(tmp_path: Path) -> None:
+    class Rotating(Subtitles):
+        def __init__(self) -> None:
+            super().__init__()
+            self.track_id = 10
+
+        def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
+            del bvid, cid
+            self.track_id += 1
+            return (SubtitleTrack(self.track_id, "zh-CN", "x", SubtitleTrackKind.AI),)
+
+    all_pages = _selection()
+    first_page = PageSelection(
+        all_pages.video, (all_pages.pages[0],), SelectionSource.EXPLICIT_PAGE
+    )
+    second_page = PageSelection(
+        all_pages.video, (all_pages.pages[1],), SelectionSource.EXPLICIT_PAGE
+    )
+    subtitles = Rotating()
+    first = run_extraction(
+        selection=first_page, languages=(), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+    run_extraction(
+        selection=second_page, languages=(), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+    restored = run_extraction(
+        selection=first_page, languages=(), force=False, cwd=tmp_path, subtitles=subtitles
+    )
+
+    assert first.pages[0].tracks[0].json_action == "written"
+    assert restored.pages[0].tracks[0].json_action == "skipped"
 
 
 def test_track_failure_isolated_and_exit_codes(tmp_path: Path) -> None:

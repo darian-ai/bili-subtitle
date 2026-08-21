@@ -25,6 +25,7 @@ class SubtitlePort(Protocol):
     def download_selected(
         self, *, bvid: str, cid: int, selected: SubtitleTrack
     ) -> SubtitleBody: ...
+    def discard_pending(self, *, bvid: str, cid: int) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,10 +86,12 @@ def run_extraction(
             continue
         if not discovered:
             page_results.append(PageResult(page, "no_subtitles"))
+            subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
             continue
         selected = tuple(t for t in discovered if not language_set or t.language in language_set)
         if not selected:
             page_results.append(PageResult(page, "no_match"))
+            subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
             continue
         plans: list[OutputPlan | None]
         try:
@@ -189,6 +192,7 @@ def run_extraction(
             except Exception:
                 track_results.append(TrackResult(track, "failed", error="字幕处理失败。"))
         page_results.append(PageResult(page, "success", tuple(track_results)))
+        subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
     manifest_failed = False
     if output_root is None:
         try:
@@ -247,28 +251,35 @@ def _reuse_manifest_plans(
             if isinstance(history, list)
             else []
         )
-        pages = document.get("pages")
-        if not isinstance(pages, list):
-            return planned
-        previous_page = next(
-            cast(Mapping[object, object], item)
-            for item in cast(list[object], pages)
-            if isinstance(item, Mapping)
-            and cast(Mapping[object, object], item).get("cid") == page.cid
-        )
-        previous_tracks = previous_page.get("tracks")
-        if not isinstance(previous_tracks, list):
-            return planned
-    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        previous_tracks: list[object] = []
+        if not history_candidates:
+            pages = document.get("pages")
+            if not isinstance(pages, list):
+                return planned
+            previous_page = next(
+                cast(Mapping[object, object], item)
+                for item in cast(list[object], pages)
+                if isinstance(item, Mapping)
+                and cast(Mapping[object, object], item).get("cid") == page.cid
+            )
+            raw_previous_tracks = previous_page.get("tracks")
+            if not isinstance(raw_previous_tracks, list):
+                return planned
+            previous_tracks = cast(list[object], raw_previous_tracks)
+    except (OSError, ValueError, TypeError, StopIteration):
         return planned
 
     reused = list(planned)
     claimed: set[int] = set()
+    current_language_counts = {
+        language: sum(item.language == language for item in tracks)
+        for language in {item.language for item in tracks}
+    }
     for index, track in enumerate(tracks):
         matches: list[tuple[int, OutputPlan]] = []
         raw_candidates: list[Mapping[object, object]] = history_candidates or [
             cast(Mapping[object, object], item)
-            for item in cast(list[object], previous_tracks)
+            for item in previous_tracks
             if isinstance(item, Mapping)
         ]
         for old_index, record in enumerate(raw_candidates):
@@ -278,9 +289,6 @@ def _reuse_manifest_plans(
             if not isinstance(identity, Mapping):
                 continue
             identity_fields = cast(Mapping[object, object], identity)
-            # The live player response rotates IDs and occasionally presentation
-            # metadata.  A language is reusable only when it identifies exactly
-            # one prior record; same-language multi-track pages remain ambiguous.
             if identity_fields.get("language") != track.language:
                 continue
             json_name, srt_name = record.get("json_file"), record.get("srt_file")
@@ -297,9 +305,28 @@ def _reuse_manifest_plans(
                     ),
                 )
             )
-        if len(matches) == 1:
-            old_index, reused[index] = matches[0]
+        exact = [
+            match
+            for match in matches
+            if cast(
+                Mapping[object, object],
+                raw_candidates[match[0]].get("track", raw_candidates[match[0]]),
+            ).get("id", raw_candidates[match[0]].get("track_id"))
+            == track.track_id
+        ]
+        eligible = exact if len(exact) == 1 else matches
+        if len(eligible) == 1 and (exact or current_language_counts[track.language] == 1):
+            old_index, reused[index] = eligible[0]
             claimed.add(old_index)
+    # A historical path must never displace a distinct current track.  If a
+    # reuse collides with any current plan, retain the deterministic new plan.
+    collisions: dict[str, list[int]] = {}
+    for index, plan in enumerate(reused):
+        collisions.setdefault(plan.basename.casefold(), []).append(index)
+    for indexes in collisions.values():
+        if len(indexes) > 1:
+            for index in indexes:
+                reused[index] = planned[index]
     return tuple(reused)
 
 
@@ -318,10 +345,9 @@ def _manifest_path_history(
                 for raw in cast(list[object], raw_history):
                     if isinstance(raw, Mapping):
                         item = cast(Mapping[object, object], raw)
-                        if isinstance(item.get("cid"), int) and _safe_manifest_pair(
-                            item.get("json_file"), item.get("srt_file")
-                        ):
-                            history.append({str(key): value for key, value in item.items()})
+                        normalized = _safe_history_item(item)
+                        if normalized is not None:
+                            history.append(normalized)
     except (OSError, ValueError, TypeError):
         pass
 
@@ -331,25 +357,61 @@ def _manifest_path_history(
                 result.json_file, result.srt_file
             ):
                 continue
-            same_language = [
+            same_path = [
                 index
                 for index, item in enumerate(history)
                 if item.get("cid") == page_result.page.cid
-                and item.get("language") == result.track.language
+                and item.get("json_file") == result.json_file
+                and item.get("srt_file") == result.srt_file
             ]
             entry: dict[str, object] = {
                 "cid": page_result.page.cid,
+                "track_id": result.track.track_id,
                 "language": result.track.language,
                 "display_name": result.track.display_name,
                 "kind": result.track.kind.value,
                 "json_file": result.json_file,
                 "srt_file": result.srt_file,
             }
-            if len(same_language) == 1:
-                history[same_language[0]] = entry
-            elif not same_language:
+            if len(same_path) == 1:
+                history[same_path[0]] = entry
+            elif not same_path:
                 history.append(entry)
     return history
+
+
+def _safe_history_item(item: Mapping[object, object]) -> dict[str, object] | None:
+    cid, track_id = item.get("cid"), item.get("track_id")
+    language, display_name, kind = (
+        item.get("language"),
+        item.get("display_name"),
+        item.get("kind"),
+    )
+    json_name, srt_name = item.get("json_file"), item.get("srt_file")
+    if (
+        not isinstance(cid, int)
+        or isinstance(cid, bool)
+        or cid <= 0
+        or (track_id is not None and (not isinstance(track_id, int) or isinstance(track_id, bool)))
+        or not isinstance(language, str)
+        or not language
+        or not isinstance(display_name, str)
+        or not display_name
+        or kind not in {"human", "ai"}
+        or not _safe_manifest_pair(json_name, srt_name)
+    ):
+        return None
+    result: dict[str, object] = {
+        "cid": cid,
+        "language": language,
+        "display_name": display_name,
+        "kind": kind,
+        "json_file": json_name,
+        "srt_file": srt_name,
+    }
+    if track_id is not None:
+        result["track_id"] = track_id
+    return result
 
 
 def _safe_manifest_pair(json_name: object, srt_name: object) -> bool:

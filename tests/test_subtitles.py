@@ -361,10 +361,13 @@ def test_empty_body_address_is_unavailable_without_hiding_valid_tracks() -> None
         },
     }
     adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
-    assert [track.track_id for track in adapter.discover(bvid="BV1xx411c7mD", cid=1)] == [2]
+    tracks = adapter.discover(bvid="BV1xx411c7mD", cid=1)
+    assert [track.track_id for track in tracks] == [1, 2]
+    with pytest.raises(SubtitleAccessDenied, match="不可访问"):
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=tracks[0])
 
 
-def test_only_empty_body_addresses_are_no_subtitles() -> None:
+def test_only_empty_body_addresses_are_access_denied_not_no_subtitles() -> None:
     payload = {
         "code": 0,
         "data": {
@@ -374,5 +377,24 @@ def test_only_empty_body_addresses_are_no_subtitles() -> None:
         },
     }
     adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
-    with pytest.raises(NoSubtitles):
-        adapter.discover(bvid="BV1xx411c7mD", cid=1)
+    track = adapter.discover(bvid="BV1xx411c7mD", cid=1)[0]
+    with pytest.raises(SubtitleAccessDenied, match="不可访问"):
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=track)
+
+
+def test_discard_pending_removes_unselected_signed_addresses() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "subtitle": {
+                "subtitles": [
+                    {"id": 1, "lan": "x", "lan_doc": "x", "type": 0, "subtitle_url": SIGNED}
+                ]
+            }
+        },
+    }
+    adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
+    track = adapter.discover(bvid="BV1xx411c7mD", cid=1)[0]
+    adapter.discard_pending(bvid="BV1xx411c7mD", cid=1)
+    with pytest.raises(SubtitlePlatformResponseError, match="不属于"):
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=track)

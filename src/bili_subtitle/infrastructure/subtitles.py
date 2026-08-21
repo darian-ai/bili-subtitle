@@ -28,7 +28,7 @@ _TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com", ".hdslb.com")
 @dataclass(frozen=True, slots=True)
 class _DiscoveredTrack:
     public: SubtitleTrack
-    url: str = field(repr=False)
+    url: str | None = field(repr=False)
 
 
 class BilibiliSubtitleAdapter:
@@ -37,14 +37,15 @@ class BilibiliSubtitleAdapter:
         self._pending: dict[tuple[str, int, SubtitleTrack], _DiscoveredTrack] = {}
 
     def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
+        self.discard_pending(bvid=bvid, cid=cid)
         discovered = self._discover_private(bvid=bvid, cid=cid)
         # Signed addresses stay private to this adapter and are consumed once by
         # download_selected.  Reusing the player response avoids a second request
         # whose short-lived address set can legitimately differ from discovery.
-        self._pending = {
-            key: value for key, value in self._pending.items() if key[:2] != (bvid, cid)
-        }
         for item in discovered:
+            if (bvid, cid, item.public) in self._pending:
+                self.discard_pending(bvid=bvid, cid=cid)
+                raise SubtitlePlatformResponseError("字幕轨道身份重复。")
             self._pending[(bvid, cid, item.public)] = item
         return tuple(item.public for item in discovered)
 
@@ -52,8 +53,16 @@ class BilibiliSubtitleAdapter:
         match = self._pending.pop((bvid, cid, selected), None)
         if match is None:
             raise SubtitlePlatformResponseError("选定轨道不属于本次发现结果。")
+        if match.url is None:
+            raise SubtitleAccessDenied("字幕轨道当前不可访问。")
         response = self._get(_safe_subtitle_url(match.url))
         return _parse_body(response.content)
+
+    def discard_pending(self, *, bvid: str, cid: int) -> None:
+        """Drop every unconsumed signed address at the end of one page."""
+        self._pending = {
+            key: value for key, value in self._pending.items() if key[:2] != (bvid, cid)
+        }
 
     def _discover_private(self, *, bvid: str, cid: int) -> tuple[_DiscoveredTrack, ...]:
         response = self._get(_PLAYER_API, params={"bvid": bvid, "cid": cid})
@@ -78,14 +87,7 @@ class BilibiliSubtitleAdapter:
             raise SubtitlePlatformResponseError("字幕轨道列表结构异常。")
         if not raw_tracks:
             raise NoSubtitles("该分集没有可见字幕。")
-        parsed = tuple(
-            track
-            for item in cast(list[object], raw_tracks)
-            if (track := _parse_track(item)) is not None
-        )
-        if not parsed:
-            raise NoSubtitles("该分集没有可见字幕。")
-        return parsed
+        return tuple(_parse_track(item) for item in cast(list[object], raw_tracks))
 
     def _get(self, url: str, *, params: dict[str, str | int] | None = None) -> httpx.Response:
         try:
@@ -134,7 +136,7 @@ def _parse_body(raw: bytes) -> SubtitleBody:
     return SubtitleBody(raw, cues)
 
 
-def _parse_track(raw: object) -> _DiscoveredTrack | None:
+def _parse_track(raw: object) -> _DiscoveredTrack:
     if not isinstance(raw, Mapping):
         raise SubtitlePlatformResponseError("字幕轨道结构异常。")
     item = cast(Mapping[str, object], raw)
@@ -155,12 +157,10 @@ def _parse_track(raw: object) -> _DiscoveredTrack | None:
         or not isinstance(url, str)
     ):
         raise SubtitlePlatformResponseError("字幕轨道字段缺失或类型错误。")
-    # The player API can advertise a legitimate track while withholding its
-    # body address.  It is unavailable, not a malformed response.
-    if not url:
-        return None
     kind = _parse_track_kind(item)
-    return _DiscoveredTrack(SubtitleTrack(track_id, language, name, kind), url)
+    # An advertised track with no body address is distinct from an empty track
+    # collection.  Preserve its public identity and classify access on download.
+    return _DiscoveredTrack(SubtitleTrack(track_id, language, name, kind), url or None)
 
 
 def _parse_track_kind(item: Mapping[str, object]) -> SubtitleTrackKind:
