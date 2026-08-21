@@ -1,170 +1,285 @@
-# Bilibili 站内字幕 CLI：技术栈与工程约束
+# bili-study：技术栈与工程约束
 
 ## 文档信息
 
 | 项目 | 内容 |
 |---|---|
-| 文档性质 | 项目 Constitution：技术选择、架构边界和质量约束的唯一权威来源 |
-| 当前状态 | 已批准 |
-| 最后更新 | 2026-08-20 |
+| 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
+| 当前状态 | V1 技术栈已实现；V2 技术方案已批准，新增组件尚未接入 |
+| 最后更新 | 2026-08-21 |
 
-> 产品行为以 [`mission.md`](./mission.md) 为准。技术实现不得改变产品契约或引入范围外能力。
+> 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
 
 ## 一、技术目标
 
-技术方案优先满足以下要求：
+技术方案按以下优先级演进：
 
-1. Windows 上安装和使用简单。
-2. 登录凭据安全，不依赖用户手工复制 Cookie。
-3. 接口变化被隔离在 Bilibili 适配层，不污染业务和导出逻辑。
-4. 字幕正文忠实、可验证，不发生隐式转换。
-5. 默认测试不联网、不读取真实账号凭据。
-6. 依赖保持精简，避免引入媒体下载或识别能力。
+1. 保持 V1 字幕提取、登录、导出和安全边界稳定，不因 V2 发生回归。
+2. 在 Windows 上以一个本地 Python 服务复用字幕、模型、存储和安全能力。
+3. 浏览器扩展保持薄前端，不接触 Bilibili Cookie、模型 API Key 或字幕签名 URL。
+4. 所有 AI 结论都能引用稳定字幕 cue 与时间戳，并能在本地验证。
+5. 个人笔记与可重建生成物分离，任何重试、升级和重建不得破坏用户内容。
+6. 长字幕完整分块处理，任务可缓存、可恢复、可诊断，不依赖单次长连接。
+7. 默认自动化测试不联网、不读取真实凭据、不调用真实模型。
+8. 新依赖按阶段引入；未进入当前阶段的数据库、向量或 UI 能力不得提前混入运行时。
 
-## 二、已选技术栈
+## 二、技术选择与实现状态
 
-| 领域 | 选择 | 用途与理由 |
-|---|---|---|
-| 语言 | Python 3.12+ | 类型能力成熟，Windows 支持良好，适合 CLI 和 HTTP 客户端 |
-| 项目管理 | uv | 管理虚拟环境、依赖、运行、构建和全局工具安装 |
-| 包布局 | `src/bili_subtitle/` | 避免从仓库根目录意外导入未安装源码 |
-| 构建后端 | Hatchling | 提供简洁、标准的 Python 包构建流程 |
-| CLI | Typer | 定义主命令、认证子命令、参数校验和帮助文本 |
-| 终端显示 | Rich | 显示进度、二维码周边提示、摘要和错误，不承载业务逻辑 |
-| HTTP | HTTPX 同步客户端 | 统一超时、重定向、Cookie、响应检查和测试替身；V1 串行处理以降低复杂度和请求压力 |
-| 数据模型 | 标准库 `dataclasses`、`enum` 和显式解析函数 | 保持依赖精简，并在平台响应进入业务层前完成结构校验 |
-| 二维码 | `qrcode` | 在终端渲染二维码矩阵；不要求 GUI 或浏览器扩展 |
-| 凭据存储 | `keyring` | 在 Windows 上使用 Credential Manager 保存会话凭据 |
-| JSON | 标准库 `json`，同时保留原始响应字节 | 业务解析与原始内容保存相互独立 |
-| SRT | 项目内的纯转换器 | 精确控制时间格式和正文，不引入文本处理行为 |
-| 文件系统 | `pathlib` 与同目录临时文件替换 | 处理 Windows 路径，并实现安全写入 |
-| 测试 | pytest、respx、pytest-cov | 覆盖纯逻辑、HTTP 模拟和覆盖率统计 |
-| 代码质量 | Ruff | 统一格式、导入排序和静态规则检查 |
-| 类型检查 | Pyright | 在不运行代码的情况下检查公共模型和边界类型 |
+| 领域 | 选择 | 状态 | 用途与约束 |
+|---|---|---|---|
+| Python | Python 3.12+ | 已实现 | 字幕核心、本地应用、服务和存储 |
+| 项目管理 | uv | 已实现 | 环境、依赖、运行、构建和工具安装 |
+| Python 构建 | Hatchling，`src/` 布局 | 已实现 | 继续发布标准 wheel/sdist |
+| 现有 CLI | Typer | 已实现 | `bili-subtitle`、认证和参数校验 |
+| 新 CLI | Typer，新增 `bili-study` 入口 | 计划采用 | 复用现有命令风格，保持兼容提取入口 |
+| Bilibili HTTP | HTTPX 同步 Client | 已实现 | 单会话、固定超时、手动安全重定向和测试替身 |
+| 凭据 | keyring / Windows Credential Manager | 已实现并扩展 | 现有 Cookie 继续复用；模型 Key 使用独立服务槽位 |
+| 字幕与文件 | dataclasses、Decimal、JSON、pathlib、原子写入 | 已实现 | 原始 JSON、忠实 SRT、manifest 和 Windows 路径安全 |
+| 本地 API | FastAPI、Pydantic、Uvicorn | 计划采用 | 只绑定 loopback，提供版本化 JSON/OpenAPI 接口 |
+| 本地状态 | 标准库 SQLite | 计划采用 | 库注册、任务、缓存元数据、schema migration 和全文索引 |
+| 云端模型 | OpenAI-compatible Chat Completions | 计划采用 | 用户自备基础 URL、模型与 Key；适配器与领域隔离 |
+| 向量检索 | SQLite FTS5 + 可替换向量端口 | 后续计划 | 首个实现计划锁定 `sqlite-vec`，不属于插件原型 |
+| 扩展框架 | WXT、TypeScript、React、Manifest V3 | 计划采用 | Chrome/Edge 侧栏、内容脚本、后台脚本和构建 |
+| JavaScript 工具 | Node.js 24、npm lockfile | 计划采用 | `npm ci` 提供可重现依赖和 CI |
+| Python 测试 | pytest、respx、pytest-cov | 已实现并扩展 | 保持不低于 90% 的分支覆盖率 |
+| Python 质量 | Ruff、strict Pyright | 已实现并扩展 | 新 Python 代码继续遵守现有门禁 |
+| 扩展测试 | Vitest、Playwright | 计划采用 | 状态/组件单测与模拟视频页端到端测试 |
+| Markdown | 标准 Markdown、YAML frontmatter、双链、Mermaid | 计划采用 | Obsidian 友好但不依赖专用插件 |
 
-## 三、总体架构
+## 三、目标架构
 
 ```text
-CLI 层
-  ↓
+交互层
+  ├── bili-subtitle 兼容 CLI（已实现）
+  ├── bili-study CLI（计划）
+  ├── loopback Local API（计划）
+  └── Chrome/Edge Side Panel（计划）
+          ↓
 应用编排层
-  ├── 输入解析与分集选择
-  ├── 登录流程
-  └── 提取流程与结果汇总
-  ↓
+  ├── 现有输入、认证和字幕提取流程
+  ├── Transcript 构建与 revision 管理
+  ├── 学习指南、章节详情和复述反馈任务
+  ├── 个人笔记与 Markdown 发布
+  └── 库、缓存、任务与恢复
+          ↓
 领域层
-  ├── 视频与分集模型
-  ├── 字幕轨道与字幕片段模型
-  └── 成功、跳过、无字幕与失败结果
-  ↓
+  ├── 视频、分集、字幕轨道与 cue
+  ├── TranscriptRevision 与 EvidenceRef
+  ├── StudyGuide、ChapterDetail 与 GuidingQuestion
+  └── PersonalNote、Reflection 与结构化结果
+          ↓
 基础设施层
-  ├── Bilibili HTTP 适配器
-  ├── Windows Credential Manager 适配器
-  └── JSON、SRT、manifest 与安全文件写入
+  ├── Bilibili HTTP / Credential Manager（已实现）
+  ├── OpenAI-compatible 模型适配器
+  ├── SQLite repository 与 migration
+  ├── 本地任务 worker 与缓存
+  └── JSON/SRT/manifest/Markdown 安全发布
 ```
 
-依赖方向只能从上向下。领域层不得导入 Typer、Rich、HTTPX、keyring 或具体 Bilibili 接口代码。
+### 依赖方向
 
-## 四、模块职责
+- 领域层只依赖标准库，不导入 Typer、FastAPI、Pydantic、HTTPX、keyring、SQLite 扩展、WXT 或 React。
+- 应用层依赖 Protocol 定义的字幕、模型、repository、时钟、任务和导出端口。
+- CLI、本地 API 和扩展是同级入口，不互相承载业务规则。
+- FastAPI/Pydantic DTO 必须在 API 边界映射为领域模型，不把 Pydantic 模型传播到领域层。
+- 扩展通过生成的 TypeScript API 类型调用本地服务，不复制 Python 业务校验。
+- 现有字幕适配器继续独占平台接口与签名 URL；扩展不得自行抓字幕或读取网页 Cookie。
 
-### CLI 层
+### 包与目录演进
 
-- 解析命令和参数。
-- 将用户输入交给应用编排层。
-- 把结构化结果渲染成人类可读输出。
-- 将最终结果映射到退出码。
-- 不直接请求网络、不写字幕文件、不读取 Cookie。
+- `src/bili_subtitle/` 继续承载已完成的字幕核心和兼容入口。
+- V2 新应用编排放入 `src/bili_study/`，通过稳定端口复用字幕核心，不复制实现。
+- `extension/` 作为独立 npm workspace 保存 WXT 扩展，不把 Node 依赖加入 Python wheel。
+- 同一发行构建暴露 `bili-study` 和兼容 `bili-subtitle` 两个控制台入口；首次原型前通过隔离安装验证命令共存。
 
-### 应用编排层
+## 四、V2 核心数据契约
 
-- 执行“解析输入 → 检查登录 → 获取分集 → 获取轨道 → 下载 → 导出 → 汇总”。
-- 控制多分集和多轨道的串行执行。
-- 隔离局部失败并保留已成功结果。
-- 登录成功后只恢复原任务一次。
+### Transcript revision
 
-### 领域层
+`TranscriptRevision` 至少包含：
 
-- 使用显式类型表达视频、分集、轨道、字幕片段和处理结果。
-- 区分无字幕、需登录、不可访问、网络错误和平台响应错误。
-- 不持有 Cookie、二维码密钥或带签名的字幕 URL；下载地址只存在于基础设施层的短生命周期对象中。
+- 不可变 revision ID 和 schema version。
+- BVID、aid、P 序号、CID、标题和规范视频 URL。
+- 字幕轨道的当前平台 ID、语言、显示名称和人工/AI 类型。
+- 原始字幕 SHA-256 和有序 cue 集合。
+- 每个 cue 的稳定局部 ID、开始/结束毫秒和原文。
 
-### Bilibili 适配层
+平台字幕轨道数值 ID 可能轮换，不能单独充当长期身份。引用必须同时携带 revision ID 与 cue ID；字幕内容变化后生成新 revision，不在旧 revision 上原地改写引用。
 
-- 负责短链重定向、视频元数据、分集列表、登录状态、二维码登录、播放器字幕列表和字幕正文请求。
-- 平台接口路径、请求头和响应结构校验集中管理。
-- 所有请求必须有连接和读取超时，不做无限重试。
-- 对限流、风控、权限拒绝和响应结构变化给出明确错误，不尝试绕过。
-- 平台接口不是稳定公共契约，因此测试必须通过固定响应锁定当前支持的结构。
+### 学习数据
 
-### 导出与存储层
+- `StudyGuide`：来源 revision、输出语言、生成指纹、学习目标和有序章节。
+- `Chapter`：稳定章节 ID、标题、起止时间和引导问题；大纲阶段不包含直接答案。
+- `ChapterDetail`：总结、关键点、术语、易遗漏细节和 `EvidenceRef`。
+- `GuidingQuestion`：问题、用于本地校验但初始隐藏的证据引用。
+- `PersonalNote`：稳定 ID、来源、时间戳、类型、Markdown 正文和创建/更新时间。
+- `Reflection`：问题、用户回答或复述、已覆盖/遗漏/可能误解及证据。
 
-- 原始 JSON 和 SRT 来自同一次字幕正文响应。
-- 文件名净化必须是确定性的，并保留分集、语言和轨道身份。
-- 先写同目录临时文件，成功关闭后再替换目标文件。
-- 默认逐文件跳过已有结果；`--force` 才允许替换。
-- manifest 不保存 Cookie、二维码密钥、请求头或字幕签名 URL。
+所有公开 JSON 和持久文档携带 schema version。迁移必须前向执行并有备份/回滚边界；可重建缓存允许删除重建，个人笔记不得依赖破坏性数据库迁移才能读取。
 
-## 五、认证与秘密管理
+## 五、AI 生成与证据策略
 
-- `keyring` 服务名称固定为 `bili-subtitle`，V1 使用单一默认账号槽位。
-- 会话所需 Cookie 作为一个序列化凭据对象保存，由凭据适配器统一读写。
-- 二维码密钥只在一次登录状态机生命周期内存在，不落盘。
-- 日志、异常和调试表示必须经过秘密字段排除；禁止依赖简单字符串替换作为唯一保护。
-- 自动化测试必须使用明显的伪凭据，并检查捕获输出中不存在这些值。
+### Provider 配置
 
-## 六、网络与可靠性策略
+- 首个 Provider 使用可配置的 HTTPS base URL、chat model、输出语言和上下文预算。
+- `bili-study config provider set` 通过隐藏输入读取 API Key；Key 只写 Credential Manager。
+- 非秘密配置原子写入 `%APPDATA%\bili-study\config.json`。
+- 优先使用兼容接口提供的 JSON Schema/JSON mode；能力不足时使用 JSON 提示与本地严格解析。
+- Provider 特有字段只存在于适配器层，领域和应用流程不绑定具体厂商。
 
-- V1 使用单个复用的同步 HTTPX Client，统一 Cookie、请求头、超时和重定向策略。
-- 默认串行处理分集与轨道，不实现并发下载。
-- 只对明确可恢复的瞬时网络失败进行有限重试；认证、权限、结构错误和签名失效不盲目重试。
-- 获得带签名字幕 URL 后立即下载，不把地址放入长期领域模型、manifest 或日志。
-- 每个分集和轨道产生独立结果，使局部失败可以被汇总而不是抛弃全部工作。
+### 两阶段生成
 
-## 七、数据与格式约束
+1. 规范化字幕按完整 cue 边界分块；默认每块最多 12,000 个 Unicode 字符或 8 分钟内容，以先达到者为准，相邻块只重叠一个完整 cue。
+2. Map 阶段只返回候选章节、目标、引导问题和 cue 引用。
+3. Reduce 阶段合并重叠章节并形成覆盖完整时间范围的有序大纲。
+4. 用户展开章节后，详情任务只读取该章节及相邻边界 cue，生成详细学习内容。
+5. 用户提交回答或复述后，反馈任务只读取问题对应证据和必要上下文。
+6. 结构解析或引用校验失败最多允许一次修复请求；仍失败则保留任务失败状态，不渲染未验证内容。
 
-- 时间使用非负秒值进入领域层，生成 SRT 时转换为 `HH:MM:SS,mmm`。
-- 字幕片段按平台响应顺序导出，不自动排序、合并或拆分。
-- 正文按平台返回值写入，不执行 `strip`、标点修复或语言转换。
-- 原始 JSON 优先保存原始响应字节；解析结果只用于校验和生成 SRT。
-- 所有文本输出文件使用 UTF-8。
-- 文件名净化规则必须有独立单元测试，尤其覆盖 Windows 保留名称与尾随字符。
+不得为适配模型上下文直接截断视频尾部。模型返回的 cue ID、时间范围、章节顺序和来源必须在应用层验证。
 
-## 八、测试策略
+### 缓存与成本
 
-### 默认自动化测试
+- 缓存键由 Transcript SHA-256、Provider、模型、输出语言、schema/prompt version 和生成参数组成，不包含 Key 或字幕正文。
+- 相同生成指纹默认复用结果；显式重新生成创建新结果，不覆盖个人内容。
+- 记录请求数量、Provider 返回的 token usage、耗时和缓存命中；未返回 usage 时只标记未知，不自行伪造精确费用。
+- 后续 Embedding 单独配置模型和缓存；首个插件原型不得提前要求向量依赖。
 
-- 纯函数单元测试：输入解析、时间转换、SRT、文件名净化和退出码。
-- HTTP 模拟测试：视频元数据、二维码状态、字幕列表、正文下载和异常响应。
-- 流程测试：单分集、多分集、全部轨道、语言过滤、部分失败和重复运行。
-- 安全测试：标准输出、标准错误、异常、manifest 和快照中不得出现伪秘密或签名 URL。
-- 默认禁止真实网络访问，也不读取 Windows Credential Manager 中的真实凭据。
+### Prompt injection 边界
 
-### 显式人工验收
+- 字幕、标题、个人笔记和模型历史输出全部视为不可信数据。
+- 系统提示明确禁止执行字幕中的指令，不为模型提供网络、文件或系统工具。
+- 结构化输出经过 schema、枚举、长度、cue 引用和时间范围校验后才能进入持久层。
+- 不把简单转义或字符串替换当作唯一防护。
 
-- 在 Windows 上扫码登录。
-- 提取一个含 AI 字幕的普通 UGC 投稿。
-- 提取一个多分集投稿，并分别验证默认全部分集与单分集选择。
-- 重复执行验证跳过行为，再使用 `--force` 验证覆盖行为。
-- 人工验收记录不得包含账号凭据或签名 URL。
+## 六、本地服务与浏览器扩展
 
-## 九、交付方式
+### Local API
 
-- 开发与测试统一通过 uv 执行。
-- 本地开发使用 `uv sync` 和 `uv run`。
-- 构建使用 `uv build`。
-- 用户安装目标是通过 `uv tool install` 获得全局 `bili-subtitle` 命令。
-- V1 不构建独立 EXE，不要求 FFmpeg，也不安装浏览器自动化工具。
+- 服务固定绑定 `127.0.0.1`，默认端口 `8765`；允许用户改端口，不允许通过公开参数绑定局域网地址。
+- 除最小健康检查外，API 需要配对后的 Bearer token。
+- `bili-study plugin pair` 生成五分钟有效、单次使用的配对码；配对记录绑定扩展 Origin。
+- 校验 Host、Origin、Authorization、Content-Type、请求大小和 schema；禁止通配 CORS。
+- 长字幕和模型生成使用持久 job；API 返回 `202 + job_id`，扩展轮询状态，不依赖浏览器保持长连接。
+- 首期使用单 worker 串行执行 Bilibili 与模型任务，避免平台压力和并发写入冲突。
+- OpenAPI 是扩展接口的唯一来源；生成 TypeScript 类型后由 CI 检查无漂移。
 
-## 十、禁止或暂不采用
+计划公开的 V2 API：
 
-- 不把 yutto、BBDown 或 yt-dlp 作为运行时依赖。
-- 不复制 GPL 项目的实现代码；可参考公开可观察行为并独立实现。
-- 不引入 FFmpeg、ASR 模型、OCR 引擎或媒体处理库。
-- 不使用异步框架、任务队列、数据库、插件系统或依赖注入框架。
-- 不为了平台拒绝访问而加入 WBI、APP 私有接口或其他绕过机制。
+```text
+GET  /api/v1/health
+POST /api/v1/pair
+GET  /api/v1/libraries
+POST /api/v1/videos/inspect
+POST /api/v1/study-guides
+GET  /api/v1/jobs/{job_id}
+GET  /api/v1/study-guides/{guide_id}
+POST /api/v1/study-guides/{guide_id}/chapters/{chapter_id}/details
+POST /api/v1/notes
+GET  /api/v1/sources/{source_id}/notes
+POST /api/v1/reflections
+```
 
-## 十一、变更记录
+### 扩展职责
+
+- 使用 Manifest V3、WXT、TypeScript 和 React，首期只构建 Chrome/Edge 侧栏。
+- Content script 只读取受支持视频页的 URL、当前 P、HTML video 当前时间和播放跳转能力。
+- Side panel 显示连接/认证/任务状态、轨道选择、学习大纲、章节详情、引导问题、个人笔记和复述反馈。
+- Background/service worker 负责本地 API 通信和页面上下文转发，不保存模型或 Bilibili 凭据。
+- Bilibili SPA 导航后重新识别上下文；页面不受支持时清楚禁用学习操作。
+- 默认只跟随高亮当前章节，不自动暂停、不主动弹题、不在用户点击前发起模型请求。
+
+## 七、本地存储与 Markdown
+
+### 应用状态
+
+- `%APPDATA%\bili-study\config.json`：非秘密配置和已注册知识库路径。
+- `%LOCALAPPDATA%\bili-study\`：SQLite、Transcript、任务、生成缓存和可重建索引。
+- Windows Credential Manager：Bilibili 会话和按 Provider 区分的模型 API Key。
+- 知识库目录：用户可阅读的生成 Markdown 与个人 Markdown 笔记。
+
+SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份；任务与缓存表可以重建，个人 Markdown 不以 SQLite 作为唯一副本。
+
+### 知识库目录
+
+```text
+知识库/
+├── generated/
+│   └── videos/
+├── notes/
+├── reviews/
+└── .bili-study.json
+```
+
+- `.bili-study.json` 只保存 schema version、库 UUID 和非秘密元数据。
+- `generated/` 中的 AI 内容带来源 revision、生成指纹和“可重建”标记。
+- `notes/` 中个人笔记使用独立文件、稳定 ID、YAML frontmatter 和 Markdown 正文。
+- 重新生成、`--force`、模型切换和索引重建只影响可重建内容。
+- 所有路径继续使用 V1 的 Windows 文件名净化、长度预算和同目录原子发布策略。
+
+## 八、网络、可靠性与隐私
+
+- Bilibili 请求继续使用同一个同步 HTTPX Client、登录会话和安全重定向规则。
+- 模型请求使用独立 HTTPX Client、明确连接/读取/总超时和稳定错误分类。
+- 只对限流、连接中断和明确服务端瞬时失败做有界退避；认证、配额、结构和内容校验失败不盲目重试。
+- 用户首次云端生成前显示 Provider、模型和将上传字幕的说明；取消时不创建模型任务。
+- 插件、本地 API、日志和异常不回显完整远端响应、Prompt、字幕正文、个人笔记或凭据。
+- Local API 不开放局域网监听，不提供关闭认证的生产选项。
+- 服务中断后恢复持久任务状态；不能确认是否完成的外部请求标记为可重试失败，不自动重复收费请求。
+
+## 九、测试与质量门禁
+
+### Python
+
+- 保持现有 208 项 V1 回归及不低于 90% 的分支覆盖率。
+- 新增 Transcript/revision、引用、分块、缓存、migration、个人笔记保护和模型结构校验测试。
+- 使用 respx 固定 OpenAI-compatible 响应；默认 socket 封锁继续覆盖 Bilibili 和模型域名。
+- FastAPI 测试覆盖配对过期、token、Origin/CORS、请求限制、job 生命周期、重启恢复和错误脱敏。
+- strict Pyright、Ruff lint、Ruff format 和 `git diff --check` 继续作为门禁。
+
+### Extension
+
+- Vitest 覆盖状态机、API client、章节跟随、笔记状态和安全渲染。
+- Playwright 使用本地模拟视频页和假 Local API 覆盖配对、SPA 导航、当前时间、点击跳转和服务断开。
+- Node.js 24 与 npm lockfile 进入 Windows CI；执行 `npm ci`、lint、typecheck、unit、e2e 和 Chrome/Edge 构建。
+- 扩展不得依赖真实 Bilibili 页面完成默认 CI。
+
+### AI 评测
+
+- 使用历史、科学和通用知识等脱敏字幕固定集，不保存真实账号或投稿数据。
+- 机器断言覆盖 cue 引用存在、时间范围合法、完整视频覆盖、初始问题不含答案和无证据拒答。
+- Prompt injection 固定集证明字幕无法改变系统规则。
+- 模型文字质量采用人工 rubric 验收，不使用不可维护的逐字 golden 输出。
+
+### 真实人工验收
+
+- 在 Chrome 与 Edge 验证短视频、长视频、多 P、人工字幕、AI 字幕、多轨道和无字幕。
+- 验证服务启动、配对、模型配置、生成、按需详情、笔记恢复、复述反馈和时间戳跳转。
+- 人工记录只保留环境、命令形态、耗时范围和通过/失败结论，不记录标题、BV、账号、字幕、笔记、Prompt 或 Key。
+
+## 十、交付与兼容
+
+- V1 继续通过 uv 构建、wheel/sdist 校验和隔离 `uv tool install` 验证。
+- V2 Python 发行必须同时安装 `bili-study` 与兼容 `bili-subtitle` 命令。
+- 首个扩展原型只提供仓库内构建产物和 Chrome/Edge“加载已解压扩展”说明。
+- 扩展商店发布前必须另行完成固定扩展 ID、权限最小化、隐私说明、升级迁移和安全审计。
+- 项目计划采用 Apache-2.0；许可证文件、包元数据和第三方依赖许可证审计完成前，不得标记 V2 基线阶段完成。
+- 首期不构建独立 EXE，不运营中心化服务，不要求 FFmpeg。
+
+## 十一、禁止或延后采用
+
+- 不把 yutto、BBDown、yt-dlp、FFmpeg、ASR 或 OCR 作为运行时依赖。
+- 不在扩展中保存 API Key、Cookie、二维码密钥或字幕签名 URL。
+- 不让扩展直接调用 Bilibili 字幕接口或模型 API。
+- 不允许模型自动调用网络、文件、Shell 或浏览器工具。
+- 不默认自动暂停、上传、生成、索引或答题。
+- 首个插件原型不引入向量数据库、知识图谱、消息队列、云端账号或跨设备同步。
+- 后续 `sqlite-vec` 仍处于 pre-v1 时必须锁定版本并通过抽象端口隔离；索引随时可删除重建。
+- 不复制不兼容许可证项目的实现代码；新增依赖必须通过许可证与归档审计。
+
+## 十二、变更记录
 
 | 日期 | 变更 |
 |---|---|
-| 2026-08-20 | 固化 V1 技术栈、架构边界、安全策略、测试方案与交付方式。 |
+| 2026-08-21 | 批准 V2 目标架构：`bili-study` CLI、FastAPI loopback 服务、WXT/React Chrome/Edge 侧栏、OpenAI-compatible 模型、版本化 Transcript/证据、SQLite 状态和可移植 Markdown；新增技术均标记为计划采用。 |
+| 2026-08-20 | 固化 V1 字幕提取技术栈、架构边界、安全策略、测试方案与交付方式。 |
