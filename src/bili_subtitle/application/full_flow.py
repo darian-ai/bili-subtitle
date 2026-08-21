@@ -8,16 +8,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from bili_subtitle.domain.errors import NoSubtitles
+from bili_subtitle.application.export_port import BatchPublishError, ExportPort, OutputPlan
+from bili_subtitle.domain.errors import ExportError, NoSubtitles, SubtitleError
 from bili_subtitle.domain.models import PageSelection, SubtitleBody, SubtitleTrack, VideoPage
-from bili_subtitle.infrastructure.export import (
-    BatchPublishError,
-    OutputPlan,
-    plan_output_paths,
-    publish_atomic,
-    publish_batch,
-    render_srt,
-)
 
 
 class SubtitlePort(Protocol):
@@ -69,6 +62,7 @@ def run_extraction(
     force: bool,
     cwd: Path,
     subtitles: SubtitlePort,
+    exporter: ExportPort,
 ) -> FlowResult:
     if any(not language.strip() for language in languages):
         raise ValueError("语言代码不能为空。")
@@ -80,10 +74,15 @@ def run_extraction(
             discovered = subtitles.discover(bvid=selection.video.bvid, cid=page.cid)
         except NoSubtitles:
             page_results.append(PageResult(page, "no_subtitles"))
+            subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
             continue
-        except Exception:
+        except SubtitleError:
             page_results.append(PageResult(page, "failed", error="字幕轨道发现失败。"))
+            subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
             continue
+        except BaseException:
+            subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
+            raise
         if not discovered:
             page_results.append(PageResult(page, "no_subtitles"))
             subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
@@ -95,21 +94,29 @@ def run_extraction(
             continue
         plans: list[OutputPlan | None]
         try:
-            output_root, complete_plans = plan_output_paths(
+            output_root, complete_plans = exporter.plan(
                 cwd=cwd, video=selection.video, page=page, tracks=selected
             )
-            plans = list(_reuse_manifest_plans(output_root, page, selected, complete_plans))
-        except Exception:
+            plans = list(
+                _reuse_manifest_plans(
+                    output_root,
+                    page,
+                    selected,
+                    complete_plans,
+                    exporter.read_manifest(output_root),
+                )
+            )
+        except ExportError:
             # 路径身份包含轨道字段；单条异常轨道不能阻止同分集其他轨道。
             plans = []
             for track in selected:
                 try:
-                    candidate_root, candidate = plan_output_paths(
+                    candidate_root, candidate = exporter.plan(
                         cwd=cwd, video=selection.video, page=page, tracks=(track,)
                     )
                     output_root = candidate_root
                     plans.append(candidate[0])
-                except Exception:
+                except ExportError:
                     plans.append(None)
             collisions: dict[str, list[int]] = {}
             for index, plan in enumerate(plans):
@@ -119,12 +126,16 @@ def run_extraction(
                 if len(indexes) > 1:
                     for index in indexes:
                         plans[index] = None
+        except BaseException:
+            subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
+            raise
         track_results: list[TrackResult] = []
         for track, plan in zip(selected, plans, strict=True):
             if plan is None:
                 track_results.append(TrackResult(track, "failed", error="输出路径规划失败。"))
                 continue
-            json_exists, srt_exists = plan.json_path.exists(), plan.srt_path.exists()
+            json_exists = exporter.exists(plan.json_path)
+            srt_exists = exporter.exists(plan.srt_path)
             if not force and json_exists and srt_exists:
                 track_results.append(
                     TrackResult(
@@ -141,7 +152,7 @@ def run_extraction(
                 body = subtitles.download_selected(
                     bvid=selection.video.bvid, cid=page.cid, selected=track
                 )
-                srt = render_srt(body.cues).encode("utf-8")
+                srt = exporter.render_srt(body.cues).encode("utf-8")
                 json_action = "replaced" if json_exists else "written"
                 srt_action = "replaced" if srt_exists else "written"
                 publications: list[tuple[Path, bytes, bool]] = []
@@ -153,7 +164,7 @@ def run_extraction(
                     publications.append((plan.srt_path, srt, srt_exists))
                 else:
                     srt_action = "skipped"
-                publish_batch(tuple(publications))
+                exporter.publish_batch(tuple(publications))
                 track_results.append(
                     TrackResult(
                         track,
@@ -182,24 +193,27 @@ def run_extraction(
                     TrackResult(
                         track,
                         "failed",
-                        plan.json_path.name if plan.json_path.exists() else None,
-                        plan.srt_path.name if plan.srt_path.exists() else None,
+                        plan.json_path.name if exporter.exists(plan.json_path) else None,
+                        plan.srt_path.name if exporter.exists(plan.srt_path) else None,
                         json_action,
                         srt_action,
                         "字幕文件发布失败。",
                     )
                 )
-            except Exception:
+            except (SubtitleError, ExportError):
                 track_results.append(TrackResult(track, "failed", error="字幕处理失败。"))
+            except BaseException:
+                subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
+                raise
         page_results.append(PageResult(page, "success", tuple(track_results)))
         subtitles.discard_pending(bvid=selection.video.bvid, cid=page.cid)
     manifest_failed = False
     if output_root is None:
         try:
-            output_root, _ = plan_output_paths(
+            output_root, _ = exporter.plan(
                 cwd=cwd, video=selection.video, page=selection.pages[0], tracks=()
             )
-        except Exception:
+        except ExportError:
             output_root = None
     if output_root is not None:
         manifest = {
@@ -210,15 +224,17 @@ def run_extraction(
                 "title": selection.video.title,
             },
             "pages": [_manifest_page(item) for item in page_results],
-            "path_history": _manifest_path_history(output_root, page_results),
+            "path_history": _manifest_path_history(
+                exporter.read_manifest(output_root), page_results
+            ),
         }
         try:
-            publish_atomic(
+            exporter.publish_atomic(
                 output_root / "manifest.json",
                 (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode(),
-                replace=(output_root / "manifest.json").exists(),
+                replace=exporter.exists(output_root / "manifest.json"),
             )
-        except Exception:
+        except ExportError:
             manifest_failed = True
     else:
         manifest_failed = True
@@ -230,13 +246,10 @@ def _reuse_manifest_plans(
     page: VideoPage,
     tracks: tuple[SubtitleTrack, ...],
     planned: tuple[OutputPlan, ...],
+    payload: object | None = None,
 ) -> tuple[OutputPlan, ...]:
     """Reuse unambiguous prior paths when the platform rotates numeric track IDs."""
     try:
-        payload = cast(
-            object,
-            json.loads((output_root / "manifest.json").read_text(encoding="utf-8")),
-        )
         if not isinstance(payload, Mapping):
             return planned
         document = cast(Mapping[object, object], payload)
@@ -266,7 +279,7 @@ def _reuse_manifest_plans(
             if not isinstance(raw_previous_tracks, list):
                 return planned
             previous_tracks = cast(list[object], raw_previous_tracks)
-    except (OSError, ValueError, TypeError, StopIteration):
+    except (TypeError, StopIteration):
         return planned
 
     reused = list(planned)
@@ -331,14 +344,10 @@ def _reuse_manifest_plans(
 
 
 def _manifest_path_history(
-    output_root: Path, page_results: list[PageResult]
+    payload: object | None, page_results: list[PageResult]
 ) -> list[dict[str, object]]:
     history: list[dict[str, object]] = []
     try:
-        payload = cast(
-            object,
-            json.loads((output_root / "manifest.json").read_text(encoding="utf-8")),
-        )
         if isinstance(payload, Mapping):
             raw_history = cast(Mapping[object, object], payload).get("path_history")
             if isinstance(raw_history, list):
@@ -348,7 +357,7 @@ def _manifest_path_history(
                         normalized = _safe_history_item(item)
                         if normalized is not None:
                             history.append(normalized)
-    except (OSError, ValueError, TypeError):
+    except TypeError:
         pass
 
     for page_result in page_results:

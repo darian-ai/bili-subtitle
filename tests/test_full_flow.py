@@ -1,12 +1,13 @@
 import json
 import os
+from functools import partial
 from pathlib import Path
 
 import pytest
 
 import bili_subtitle.application.full_flow as flow_module
 import bili_subtitle.infrastructure.export as export_module
-from bili_subtitle.application.full_flow import run_extraction
+from bili_subtitle.application.full_flow import run_extraction as _run_extraction
 from bili_subtitle.domain.errors import ExportError
 from bili_subtitle.domain.models import (
     PageSelection,
@@ -17,7 +18,13 @@ from bili_subtitle.domain.models import (
     VideoMetadata,
     VideoPage,
 )
-from bili_subtitle.infrastructure.export import plan_output_paths, sanitize_component
+from bili_subtitle.infrastructure.export import (
+    FileSystemExportAdapter,
+    plan_output_paths,
+    sanitize_component,
+)
+
+run_extraction = partial(_run_extraction, exporter=FileSystemExportAdapter())
 
 
 def _selection() -> PageSelection:
@@ -286,7 +293,11 @@ def test_manifest_path_reuse_rejects_parent_traversal(tmp_path: Path) -> None:
     )
 
     reused = flow_module._reuse_manifest_plans(  # pyright: ignore[reportPrivateUsage]
-        root, page, (track,), planned
+        root,
+        page,
+        (track,),
+        planned,
+        json.loads((root / "manifest.json").read_text(encoding="utf-8")),
     )
     assert reused == planned
 
@@ -366,16 +377,14 @@ def test_track_failure_isolated_and_exit_codes(tmp_path: Path) -> None:
                 raise RuntimeError("secret response")
             return super().download_selected(bvid=bvid, cid=cid, selected=selected)
 
-    partial = run_extraction(
-        selection=_selection(),
-        languages=("zh-CN",),
-        force=False,
-        cwd=tmp_path,
-        subtitles=Broken(),
-    )
-    assert partial.exit_code == 1
-    assert partial.pages[0].tracks[0].error == "字幕处理失败。"
-    assert partial.pages[0].tracks[1].status == "success"
+    with pytest.raises(RuntimeError, match="secret response"):
+        run_extraction(
+            selection=_selection(),
+            languages=("zh-CN",),
+            force=False,
+            cwd=tmp_path,
+            subtitles=Broken(),
+        )
 
     with pytest.raises(ValueError):
         run_extraction(
@@ -494,14 +503,14 @@ def test_no_match_missing_repair_force_and_manifest_failure(
     )
     assert forced.pages[0].tracks[0].json_action == "replaced"
 
-    real_publish = flow_module.publish_atomic
+    real_publish = export_module.publish_atomic
 
     def fail_manifest(target: Path, content: bytes, *, replace: bool) -> None:
         if target.name == "manifest.json":
-            raise OSError("injected")
+            raise ExportError("injected")
         real_publish(target, content, replace=replace)
 
-    monkeypatch.setattr(flow_module, "publish_atomic", fail_manifest)
+    monkeypatch.setattr(export_module, "publish_atomic", fail_manifest)
     failed = run_extraction(
         selection=_selection(), languages=("en-US",), force=False, cwd=tmp_path, subtitles=subtitles
     )

@@ -92,7 +92,7 @@ def test_extract_maps_domain_error(monkeypatch: pytest.MonkeyPatch) -> None:
         raise InputError("输入无效。")
 
     monkeypatch.setattr(cli, "resolve_selection", fake_resolve)
-    result = runner.invoke(cli.extract_app, ["bad"])
+    result = runner.invoke(cli.extract_app, ["BV1xx411c7mD"])
 
     assert result.exit_code == 2
     assert "错误：输入无效。" in result.output

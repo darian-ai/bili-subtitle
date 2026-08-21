@@ -7,10 +7,10 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from bili_subtitle.application.export_port import BatchPublishError, OutputPlan
 from bili_subtitle.domain.errors import ExportError
 from bili_subtitle.domain.models import (
     SubtitleBody,
@@ -24,21 +24,6 @@ _INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED = re.compile(r"(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$")
 _PATH_LIMIT = 240
 _TEMP_RESERVE = 40
-
-
-@dataclass(frozen=True, slots=True)
-class OutputPlan:
-    basename: str
-    json_path: Path
-    srt_path: Path
-
-
-class BatchPublishError(ExportError):
-    """批量发布失败，同时保留已经原子发布的目标证据。"""
-
-    def __init__(self, published: tuple[Path, ...]) -> None:
-        super().__init__("无法安全发布字幕文件。")
-        self.published = published
 
 
 def sanitize_component(value: str, *, placeholder: str = "untitled") -> str:
@@ -281,3 +266,28 @@ def _publish_new(target: Path, content: bytes) -> None:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         raise ExportError(f"无法安全发布文件：{target.name}") from exc
+
+
+class FileSystemExportAdapter:
+    """Filesystem implementation of the application export boundary."""
+
+    def plan(self, **kwargs: object) -> tuple[Path, tuple[OutputPlan, ...]]:
+        return plan_output_paths(**kwargs)  # type: ignore[arg-type]
+
+    def render_srt(self, cues: tuple[SubtitleCue, ...]) -> str:
+        return render_srt(cues)
+
+    def exists(self, path: Path) -> bool:
+        return path.exists()
+
+    def read_manifest(self, output_root: Path) -> object | None:
+        try:
+            return json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+
+    def publish_batch(self, publications: tuple[tuple[Path, bytes, bool], ...]) -> None:
+        publish_batch(publications)
+
+    def publish_atomic(self, target: Path, content: bytes, *, replace: bool) -> None:
+        publish_atomic(target, content, replace=replace)

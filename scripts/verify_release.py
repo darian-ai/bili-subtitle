@@ -12,8 +12,8 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-PROJECT = "bili_subtitle"
-VERSION = "0.1.0"
+PROJECT = "bili_study"
+VERSION = "0.1.1"
 FORBIDDEN_PARTS = {
     ".coverage",
     ".git",
@@ -61,7 +61,7 @@ def _check_sdist_scope(names: list[str]) -> None:
 
 def _check_metadata(raw: bytes) -> None:
     metadata = email.message_from_bytes(raw)
-    if metadata["Name"] != "bili-subtitle" or metadata["Version"] != VERSION:
+    if metadata["Name"] != "bili-study" or metadata["Version"] != VERSION:
         raise ValueError("unexpected project identity in archive metadata")
     if metadata["Requires-Python"] != ">=3.12":
         raise ValueError("unexpected Python requirement")
@@ -96,8 +96,14 @@ def verify(dist: Path) -> tuple[Path, Path]:
         _check_metadata(archive.read(metadata_name))
         if b"bili-subtitle = bili_subtitle.cli:main" not in archive.read(entry_name):
             raise ValueError("console entry point is missing")
+        if b"bili-study = bili_study.cli:main" not in archive.read(entry_name):
+            raise ValueError("new console entry point is missing")
         if not any(name.startswith("bili_subtitle/") for name in names):
             raise ValueError("wheel does not contain the package")
+        if not any(name.startswith("bili_study/") for name in names):
+            raise ValueError("wheel does not contain the new package")
+        if not any(name.endswith(".dist-info/licenses/LICENSE") for name in names):
+            raise ValueError("wheel does not contain LICENSE")
     with tarfile.open(sdist, "r:gz") as archive:
         names = archive.getnames()
         _safe_names(names)
@@ -109,9 +115,10 @@ def verify(dist: Path) -> tuple[Path, Path]:
                 if extracted is not None:
                     contents[member.name] = extracted.read()
         _check_contents(contents)
-        root = f"bili_subtitle-{VERSION}/"
+        root = f"{PROJECT}-{VERSION}/"
         required = {
             root + "README.md",
+            root + "LICENSE",
             root + "pyproject.toml",
             root + "specs/mission.md",
             root + "specs/tech-stack.md",
@@ -141,6 +148,8 @@ def verify_sdist_rebuild(sdist: Path) -> Path:
             _safe_names(names)
             if not any(name.startswith("bili_subtitle/") for name in names):
                 raise ValueError("wheel rebuilt from sdist does not contain the package")
+            if not any(name.startswith("bili_study/") for name in names):
+                raise ValueError("wheel rebuilt from sdist does not contain the new package")
         return sdist
 
 

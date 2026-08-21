@@ -12,14 +12,19 @@ from typer.main import _click as click
 
 from bili_subtitle.application.auth import login
 from bili_subtitle.application.full_flow import FlowResult, run_extraction
-from bili_subtitle.application.metadata import resolve_selection
+from bili_subtitle.application.input_parser import parse_video_input
+from bili_subtitle.application.metadata import resolve_parsed_selection
 from bili_subtitle.domain import MetadataError
 from bili_subtitle.domain.auth import CredentialState, LoginState
 from bili_subtitle.infrastructure.auth import BilibiliAuthAdapter
 from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, create_http_client
 from bili_subtitle.infrastructure.credentials import CredentialStoreError, KeyringCredentialStore
+from bili_subtitle.infrastructure.export import FileSystemExportAdapter
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 from bili_subtitle.infrastructure.terminal_qr import render_qr
+
+# Stable patch point retained for embedders of the V1 Python module.
+resolve_selection = resolve_parsed_selection
 
 extract_app = typer.Typer(
     add_completion=False,
@@ -71,11 +76,21 @@ def extract(
     if any(not value.strip() for value in (lang or ())):
         raise typer.BadParameter("--lang 不能是空值。")
 
+    # Input syntax is deliberately validated before credentials, HTTP, or QR I/O.
+    try:
+        parsed_video = parse_video_input(video)
+    except MetadataError as exc:
+        raise typer.BadParameter(str(exc), param_hint="video") from None
+
     store = KeyringCredentialStore()
     try:
         with create_http_client() as client:
             auth = BilibiliAuthAdapter(client)
-            outcome = login(store, auth, render_qr, typer.echo)
+            try:
+                outcome = login(store, auth, render_qr, typer.echo)
+            except KeyboardInterrupt:
+                typer.echo("错误：登录已取消。", err=True)
+                raise typer.Exit(code=2) from None
             if (
                 outcome.state not in {LoginState.VALID, LoginState.SUCCESS}
                 or outcome.credential is None
@@ -83,24 +98,26 @@ def extract(
                 typer.echo(f"错误：{outcome.message}", err=True)
                 raise typer.Exit(code=2)
             auth.apply(outcome.credential)
-            selection = resolve_selection(
-                video,
-                page=page,
-                all_pages=all_pages,
-                metadata=BilibiliMetadataAdapter(client),
-            )
-            outcome_result = run_extraction(
-                selection=selection,
-                languages=tuple(lang or ()),
-                force=force,
-                cwd=Path.cwd(),
-                subtitles=BilibiliSubtitleAdapter(client),
-            )
+            try:
+                selection = resolve_selection(
+                    parsed_video,
+                    page=page,
+                    all_pages=all_pages,
+                    metadata=BilibiliMetadataAdapter(client),
+                )
+                outcome_result = run_extraction(
+                    selection=selection,
+                    languages=tuple(lang or ()),
+                    force=force,
+                    cwd=Path.cwd(),
+                    subtitles=BilibiliSubtitleAdapter(client),
+                    exporter=FileSystemExportAdapter(),
+                )
+            except KeyboardInterrupt:
+                typer.echo("错误：字幕提取已取消。", err=True)
+                raise typer.Exit(code=2) from None
     except (MetadataError, CredentialStoreError) as exc:
         typer.echo(f"错误：{exc}", err=True)
-        raise typer.Exit(code=2) from None
-    except KeyboardInterrupt:
-        typer.echo("错误：登录已取消。", err=True)
         raise typer.Exit(code=2) from None
 
     for notice in selection.notices:
@@ -220,6 +237,9 @@ def _run_app(app: typer.Typer, *, prog_name: str, args: list[str]) -> int:
     except click.ClickException as exc:
         exc.show()
         return exc.exit_code
+    except Exception:
+        typer.echo("错误：发生内部错误。", err=True)
+        return 2
     return result if isinstance(result, int) else 0
 
 

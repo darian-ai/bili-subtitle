@@ -1,12 +1,13 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "bili-subtitle"
-version = "0.1.0"
+name = "bili-study"
+version = "0.1.1"
 description = "提取 Bilibili 站内已有字幕的 Windows 优先 CLI"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28",
@@ -17,6 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
+bili-study = "bili_study.cli:main"
 bili-subtitle = "bili_subtitle.cli:main"
 
 [dependency-groups]
@@ -29,13 +31,17 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bili_subtitle"]
+packages = ["src/bili_subtitle", "src/bili_study"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/README.md",
+    "/LICENSE",
     "/pyproject.toml",
     "/src/bili_subtitle",
+    "/src/bili_study",
+    "/specs/adrs",
+    "/specs/licenses",
     "/specs/mission.md",
     "/specs/tech-stack.md",
     "/specs/roadmap.md",

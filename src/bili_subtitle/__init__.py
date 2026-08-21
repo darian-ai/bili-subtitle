@@ -1,3 +1,5 @@
-"""bili-subtitle package."""
+"""Compatibility package shipped by the bili-study distribution."""
 
-__version__ = "0.1.0"
+from importlib.metadata import version
+
+__version__ = version("bili-study")

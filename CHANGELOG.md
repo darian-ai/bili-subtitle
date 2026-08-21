@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 0.1.1
+
+- distribution 改名为 `bili-study`，同一发行包提供新 `bili-study extract|auth` 与兼容 `bili-subtitle`。
+- 采用 Apache-2.0，加入完整依赖许可证清单与离线漂移检查。
+- 无效输入在凭据和网络 I/O 前校验，区分登录取消与提取取消，并在 CLI 边界脱敏未知异常。
+- 增加应用层导出端口及四项 Accepted ADR；未加入 Local API、AI、知识库或插件能力。
+
 ## 2026-08-21
 
 - 完成阶段二输入与元数据流程，支持解析 BV、av、常见 Bilibili 视频 URL 和受限 `b23.tv` 短链，并按 URL `p`、`--page` 与 `--all-pages` 规则选择有序分集。

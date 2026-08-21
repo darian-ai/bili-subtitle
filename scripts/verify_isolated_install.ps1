@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 $wheelPath = (Resolve-Path -LiteralPath $Wheel).Path
 $originalToolDir = [Environment]::GetEnvironmentVariable("UV_TOOL_DIR", "Process")
 $originalBinDir = [Environment]::GetEnvironmentVariable("UV_TOOL_BIN_DIR", "Process")
-$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("bili-subtitle-install-" + [guid]::NewGuid().ToString("N"))
+$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("bili-study-install-" + [guid]::NewGuid().ToString("N"))
 $resolvedTempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $resolvedRoot = [System.IO.Path]::GetFullPath($temporaryRoot)
 if (-not $resolvedRoot.StartsWith($resolvedTempBase, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -20,7 +20,7 @@ try {
     $env:UV_TOOL_BIN_DIR = $binDir
     uv tool install $wheelPath
     if ($LASTEXITCODE -ne 0) { throw "isolated uv tool install failed" }
-    $command = "Set-Location -LiteralPath '$($workDir.Replace("'", "''"))'; `$env:PATH='$($binDir.Replace("'", "''"));' + [IO.Path]::PathSeparator + `$env:PATH; bili-subtitle --help"
+    $command = "Set-Location -LiteralPath '$($workDir.Replace("'", "''"))'; `$env:PATH='$($binDir.Replace("'", "''"));' + [IO.Path]::PathSeparator + `$env:PATH; bili-study --help; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; bili-subtitle --help"
     & powershell -NoProfile -NonInteractive -Command $command
     if ($LASTEXITCODE -ne 0) { throw "fresh PowerShell invocation failed" }
 }

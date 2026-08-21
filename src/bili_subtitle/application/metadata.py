@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from bili_subtitle.application.input_parser import (
+    ParsedVideoInput,
     ShortVideoUrl,
     VideoReference,
     parse_video_input,
@@ -37,6 +38,17 @@ def resolve_selection(
         raise InputError("--page 必须是正整数。")
 
     parsed = parse_video_input(raw_input)
+    return resolve_parsed_selection(parsed, page=page, all_pages=all_pages, metadata=metadata)
+
+
+def resolve_parsed_selection(
+    parsed: ParsedVideoInput,
+    *,
+    page: int | None,
+    all_pages: bool,
+    metadata: MetadataPort,
+) -> PageSelection:
+    """Resolve an input that the CLI has already validated without I/O."""
     if isinstance(parsed, ShortVideoUrl):
         parsed = parse_video_input(metadata.resolve_short_url(parsed.url))
         if isinstance(parsed, ShortVideoUrl):

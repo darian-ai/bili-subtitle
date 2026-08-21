@@ -1,4 +1,10 @@
-# bili-subtitle
+# bili-study
+
+当前 `0.1.1` 是 V2 兼容基线：已经可用的是字幕提取与 Bilibili 认证；学习指南、AI、知识库、Local API 和浏览器扩展仍在规划中。
+
+新安装使用 `uv tool install bili-study`，提供 `bili-study extract <视频标识或URL>` 与 `bili-study auth login|status|clear`。原有 `bili-subtitle` 命令继续兼容并复用原 Credential Manager 登录状态。
+
+已安装 `bili-subtitle 0.1.0` 的用户应先运行 `uv tool uninstall bili-subtitle`，再安装 `bili-study`；不要强制覆盖两个工具记录。
 
 `bili-subtitle` 是一个 Windows 优先的命令行工具，用于提取 Bilibili 播放器已经提供、且当前账号可以正常访问的字幕轨道。人工字幕和 AI 字幕都会保存为平台原始 JSON，同时生成 UTF-8 编码的 SRT 文件。
 
@@ -50,7 +56,7 @@ uv python install 3.12
 
 ```powershell
 uv build
-uv tool install .\dist\bili_subtitle-0.1.0-py3-none-any.whl
+uv tool install .\dist\bili_study-0.1.1-py3-none-any.whl
 ```
 
 安装完成后验证命令：
@@ -72,13 +78,13 @@ uv tool update-shell
 ```powershell
 git pull
 uv build
-uv tool install --force .\dist\bili_subtitle-0.1.0-py3-none-any.whl
+uv tool install .\dist\bili_study-0.1.1-py3-none-any.whl
 ```
 
 卸载：
 
 ```powershell
-uv tool uninstall bili-subtitle
+uv tool uninstall bili-study
 ```
 
 ## 快速开始
@@ -352,7 +358,7 @@ uv run ruff format --check .
 uv run pyright
 uv build
 uv run python scripts/verify_release.py dist --rebuild-sdist
-.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_subtitle-0.1.0-py3-none-any.whl
+.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.1.1-py3-none-any.whl
 ```
 
 默认自动化测试不访问真实 Bilibili 网络，也不读取本机真实凭据。

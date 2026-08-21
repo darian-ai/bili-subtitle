@@ -1,0 +1,41 @@
+name,version,scope,distributed,spdx,source,obligation,compatible
+annotated-doc,0.0.5,runtime,yes,MIT,https://github.com/fastapi/annotated-doc,retain license,yes
+anyio,4.14.2,runtime,yes,MIT,https://github.com/agronholm/anyio,retain license,yes
+certifi,2026.7.22,runtime,yes,MPL-2.0,https://github.com/certifi/python-certifi,retain MPL notice and source availability,yes
+cffi,2.1.1,runtime,yes,MIT,https://github.com/python-cffi/cffi,retain license,yes
+colorama,0.4.6,runtime-dev,yes,BSD-3-Clause,https://github.com/tartley/colorama,retain license,yes
+coverage,7.15.4,dev,no,Apache-2.0,https://github.com/nedbat/coveragepy,development use only,yes
+cryptography,50.0.0,runtime,yes,Apache-2.0 OR BSD-3-Clause,https://github.com/pyca/cryptography,retain chosen license notices,yes
+h11,0.16.0,runtime,yes,MIT,https://github.com/python-hyper/h11,retain license,yes
+httpcore,1.0.9,runtime,yes,BSD-3-Clause,https://github.com/encode/httpcore,retain license,yes
+httpx,0.28.1,runtime,yes,BSD-3-Clause,https://github.com/encode/httpx,retain license,yes
+idna,3.19,runtime,yes,BSD-3-Clause,https://github.com/kjd/idna,retain license,yes
+iniconfig,2.3.0,dev,no,MIT,https://github.com/pytest-dev/iniconfig,development use only,yes
+jaraco-classes,3.4.0,runtime,yes,MIT,https://github.com/jaraco/jaraco.classes,retain license,yes
+jaraco-context,6.1.2,runtime,yes,MIT,https://github.com/jaraco/jaraco.context,retain license,yes
+jaraco-functools,4.6.0,runtime,yes,MIT,https://github.com/jaraco/jaraco.functools,retain license,yes
+jeepney,0.9.0,runtime,yes,MIT,https://gitlab.com/takluyver/jeepney,retain license,yes
+keyring,25.7.0,runtime,yes,MIT,https://github.com/jaraco/keyring,retain license,yes
+markdown-it-py,4.2.0,runtime,yes,MIT,https://github.com/executablebooks/markdown-it-py,retain license,yes
+mdurl,0.1.2,runtime,yes,MIT,https://github.com/executablebooks/mdurl,retain license,yes
+more-itertools,11.1.0,runtime,yes,MIT,https://github.com/more-itertools/more-itertools,retain license,yes
+nodeenv,1.10.0,dev,no,BSD-3-Clause,https://github.com/ekalinin/nodeenv,development use only,yes
+packaging,26.3,dev-build,no,Apache-2.0 OR BSD-2-Clause,https://github.com/pypa/packaging,retain chosen license notices,yes
+pluggy,1.6.0,dev-build,no,MIT,https://github.com/pytest-dev/pluggy,development use only,yes
+pycparser,3.0,runtime,yes,BSD-3-Clause,https://github.com/eliben/pycparser,retain license,yes
+pygments,2.21.0,dev-runtime,yes,BSD-2-Clause,https://github.com/pygments/pygments,retain license,yes
+pyright,1.1.411,dev,no,MIT,https://github.com/microsoft/pyright,development use only,yes
+pytest,9.1.1,dev,no,MIT,https://github.com/pytest-dev/pytest,development use only,yes
+pytest-cov,7.1.0,dev,no,MIT,https://github.com/pytest-dev/pytest-cov,development use only,yes
+pywin32-ctypes,0.2.3,runtime,yes,BSD-3-Clause,https://github.com/enthought/pywin32-ctypes,retain license,yes
+qrcode,8.2,runtime,yes,BSD-3-Clause,https://github.com/lincolnloop/python-qrcode,retain license,yes
+respx,0.23.1,dev,no,BSD-3-Clause,https://github.com/lundberg/respx,development use only,yes
+rich,15.0.0,runtime,yes,MIT,https://github.com/Textualize/rich,retain license,yes
+ruff,0.16.3,dev,no,MIT,https://github.com/astral-sh/ruff,development use only,yes
+secretstorage,3.5.0,runtime,yes,BSD-3-Clause,https://github.com/mitya57/secretstorage,retain license,yes
+shellingham,1.5.4,runtime,yes,ISC,https://github.com/sarugaku/shellingham,retain license,yes
+typer,0.27.1,runtime,yes,MIT,https://github.com/fastapi/typer,retain license,yes
+typing-extensions,4.16.0,runtime-dev,yes,PSF-2.0,https://github.com/python/typing_extensions,retain license,yes
+hatchling,1.27.0,build,no,MIT,https://github.com/pypa/hatch,build use only,yes
+pathspec,0.12.1,build,no,MPL-2.0,https://github.com/cpburnz/python-pathspec,build use only,yes
+trove-classifiers,2025.5.9.12,build,no,Apache-2.0,https://github.com/pypa/trove-classifiers,build use only,yes
