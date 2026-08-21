@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | V1、V2 兼容基线及阶段八学习后端已实现；真实 Provider/CI 待验收，Local API 与扩展尚未接入 |
+| 当前状态 | V1、V2 兼容基线及阶段八学习后端已实现；离线/CI 已通过、真实 Provider 待验收，Local API 与扩展尚未接入 |
 | 最后更新 | 2026-08-22 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
@@ -281,7 +281,7 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 | 日期 | 变更 |
 |---|---|
-| 2026-08-22 | 阶段八工程与离线门禁完成：版本化学习领域、SQLite migration/任务/缓存、Provider/Key、证据化两阶段生成和 Markdown 发布接入 `0.2.0.dev1`；真实 Provider 与合并 CI 待验收。 |
+| 2026-08-22 | 阶段八工程、离线门禁与 Windows CI 完成：版本化学习领域、SQLite migration/任务/缓存、Provider/Key、证据化两阶段生成和 Markdown 发布接入 `0.2.0.dev1`；真实 Provider 待验收。 |
 | 2026-08-22 | 阶段七技术基线完成：双 CLI、导出端口、异常边界、Apache-2.0、依赖审计、归档和隔离迁移门禁已实现；阶段八/九组件仍为计划采用。 |
 | 2026-08-21 | 批准 V2 目标架构：`bili-study` CLI、FastAPI loopback 服务、WXT/React Chrome/Edge 侧栏、OpenAI-compatible 模型、版本化 Transcript/证据、SQLite 状态和可移植 Markdown；新增技术均标记为计划采用。 |
 | 2026-08-20 | 固化 V1 字幕提取技术栈、架构边界、安全策略、测试方案与交付方式。 |
