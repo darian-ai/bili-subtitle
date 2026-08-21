@@ -7,8 +7,8 @@
 | Feature | V2 Compatibility Baseline |
 | 工作分支 | `feature/v2-compatibility-baseline` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 待实施 |
-| 日期 | 2026-08-21 |
+| 状态 | 已完成 |
+| 日期 | 2026-08-21（2026-08-22 完成验收） |
 
 ## 背景与目标
 

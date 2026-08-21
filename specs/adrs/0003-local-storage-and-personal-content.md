@@ -2,6 +2,7 @@
 
 - 日期：2026-08-21
 - 状态：Accepted
+- 关联：[`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`阶段七 Feature`](../2026-08-21-v2-compatibility-baseline/requirements.md)
 
 ## 上下文
 
@@ -17,4 +18,12 @@
 
 ## 后果
 
-阶段八必须定义 schema、迁移、备份和所有权测试；阶段七不添加 SQLite 或知识库实现。
+本地优先降低托管依赖并提高可移植性，但需要处理 Windows 路径、原子发布、数据库迁移、备份和多类数据所有权。
+
+## 安全与隐私影响
+
+API Key 与 Cookie 不得写入配置、SQLite 或 Markdown。个人内容不得因缓存清理、重新生成或 migration 丢失；备份也必须遵守相同的秘密隔离与本地保存边界。
+
+## 后续阶段约束
+
+阶段八必须定义 schema、迁移、备份和所有权测试；阶段七不添加 SQLite 或知识库实现。后续索引可以删除重建，个人笔记、回答和修订不得被当作缓存处理。

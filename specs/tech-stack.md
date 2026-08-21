@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | V1 技术栈已实现；V2 技术方案已批准，新增组件尚未接入 |
-| 最后更新 | 2026-08-21 |
+| 当前状态 | V1 技术栈与 V2 兼容基线已实现；学习数据、Local API、模型和扩展组件尚未接入 |
+| 最后更新 | 2026-08-22 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
 
@@ -31,7 +31,7 @@
 | 项目管理 | uv | 已实现 | 环境、依赖、运行、构建和工具安装 |
 | Python 构建 | Hatchling，`src/` 布局 | 已实现 | 继续发布标准 wheel/sdist |
 | 现有 CLI | Typer | 已实现 | `bili-subtitle`、认证和参数校验 |
-| 新 CLI | Typer，新增 `bili-study` 入口 | 计划采用 | 复用现有命令风格，保持兼容提取入口 |
+| 新 CLI | Typer，新增 `bili-study` 入口 | 已实现 | 已提供 `extract|auth`，复用处理器并保持兼容提取入口 |
 | Bilibili HTTP | HTTPX 同步 Client | 已实现 | 单会话、固定超时、手动安全重定向和测试替身 |
 | 凭据 | keyring / Windows Credential Manager | 已实现并扩展 | 现有 Cookie 继续复用；模型 Key 使用独立服务槽位 |
 | 字幕与文件 | dataclasses、Decimal、JSON、pathlib、原子写入 | 已实现 | 原始 JSON、忠实 SRT、manifest 和 Windows 路径安全 |
@@ -51,7 +51,7 @@
 ```text
 交互层
   ├── bili-subtitle 兼容 CLI（已实现）
-  ├── bili-study CLI（计划）
+  ├── bili-study CLI（`extract|auth` 已实现，学习命令计划）
   ├── loopback Local API（计划）
   └── Chrome/Edge Side Panel（计划）
           ↓
@@ -90,7 +90,7 @@
 - `src/bili_subtitle/` 继续承载已完成的字幕核心和兼容入口。
 - V2 新应用编排放入 `src/bili_study/`，通过稳定端口复用字幕核心，不复制实现。
 - `extension/` 作为独立 npm workspace 保存 WXT 扩展，不把 Node 依赖加入 Python wheel。
-- 同一发行构建暴露 `bili-study` 和兼容 `bili-subtitle` 两个控制台入口；首次原型前通过隔离安装验证命令共存。
+- 同一发行构建已暴露 `bili-study` 和兼容 `bili-subtitle` 两个控制台入口，并通过旧 distribution 卸载迁移与隔离安装验证。
 
 ## 四、V2 核心数据契约
 
@@ -263,7 +263,7 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 - V2 Python 发行必须同时安装 `bili-study` 与兼容 `bili-subtitle` 命令。
 - 首个扩展原型只提供仓库内构建产物和 Chrome/Edge“加载已解压扩展”说明。
 - 扩展商店发布前必须另行完成固定扩展 ID、权限最小化、隐私说明、升级迁移和安全审计。
-- 项目计划采用 Apache-2.0；许可证文件、包元数据和第三方依赖许可证审计完成前，不得标记 V2 基线阶段完成。
+- 项目已采用 Apache-2.0；许可证文件、包元数据、40 项锁定依赖审计和离线漂移门禁已完成。
 - 首期不构建独立 EXE，不运营中心化服务，不要求 FFmpeg。
 
 ## 十一、禁止或延后采用
@@ -281,5 +281,6 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-22 | 阶段七技术基线完成：双 CLI、导出端口、异常边界、Apache-2.0、依赖审计、归档和隔离迁移门禁已实现；阶段八/九组件仍为计划采用。 |
 | 2026-08-21 | 批准 V2 目标架构：`bili-study` CLI、FastAPI loopback 服务、WXT/React Chrome/Edge 侧栏、OpenAI-compatible 模型、版本化 Transcript/证据、SQLite 状态和可移植 Markdown；新增技术均标记为计划采用。 |
 | 2026-08-20 | 固化 V1 字幕提取技术栈、架构边界、安全策略、测试方案与交付方式。 |

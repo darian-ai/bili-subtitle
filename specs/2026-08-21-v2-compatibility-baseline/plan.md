@@ -2,56 +2,56 @@
 
 ## 1. 用失败测试冻结阶段七公开契约
 
-- [ ] 冻结 `bili-study extract|auth` 与 `bili-subtitle` 的命令树、帮助、参数和退出码契约。
-- [ ] 证明纯无效输入不创建 HTTP Client、不读取 Credential Manager、不检查登录且不显示二维码。
-- [ ] 分别覆盖登录期间和认证后 Ctrl+C，锁定脱敏文案、退出码 `2` 和无 traceback 行为。
-- [ ] 注入预期端口故障与未知编程错误，锁定“预期故障局部隔离、未知错误应用冒泡且 CLI 脱敏”。
+- [x] 冻结 `bili-study extract|auth` 与 `bili-subtitle` 的命令树、帮助、参数和退出码契约。
+- [x] 证明纯无效输入不创建 HTTP Client、不读取 Credential Manager、不检查登录且不显示二维码。
+- [x] 分别覆盖登录期间和认证后 Ctrl+C，锁定脱敏文案、退出码 `2` 和无 traceback 行为。
+- [x] 注入预期端口故障与未知编程错误，锁定“预期故障局部隔离、未知错误应用冒泡且 CLI 脱敏”。
 
 ## 2. 完成 Apache-2.0 与依赖许可证基线
 
-- [ ] 添加标准 Apache-2.0 `LICENSE`，更新项目 SPDX 许可证元数据和发行归档范围。
-- [ ] 审计全部运行时、开发、构建及传递依赖，记录版本、权威来源、许可证、分发状态和义务。
-- [ ] 对需要 notice 或其他随附材料的依赖补齐发行文件，不接受未知、专有或不兼容结论。
-- [ ] 增加离线许可证清单覆盖检查，使锁文件或构建依赖漂移必须重新审计。
+- [x] 添加标准 Apache-2.0 `LICENSE`，更新项目 SPDX 许可证元数据和发行归档范围。
+- [x] 审计全部运行时、开发、构建及传递依赖，记录版本、权威来源、许可证、分发状态和义务。
+- [x] 对需要 notice 或其他随附材料的依赖补齐发行文件，不接受未知、专有或不兼容结论。
+- [x] 增加离线许可证清单覆盖检查，使锁文件或构建依赖漂移必须重新审计。
 
 ## 3. 建立四项 Accepted ADR
 
-- [ ] 编写 Local API 安全 ADR，冻结 loopback、配对、Origin、Bearer、请求验证和扩展权限边界。
-- [ ] 编写 AI 生成与证据 ADR，冻结主动上传、Map/Reduce、按需生成、结构和 cue 校验策略。
-- [ ] 编写本地存储与个人内容 ADR，冻结配置、SQLite、Markdown、迁移和不可覆盖用户资产边界。
-- [ ] 编写命令、distribution 与版本 ADR，记录改名、双入口、0.1.1 迁移和 0.2.0 版本线。
+- [x] 编写 Local API 安全 ADR，冻结 loopback、配对、Origin、Bearer、请求验证和扩展权限边界。
+- [x] 编写 AI 生成与证据 ADR，冻结主动上传、Map/Reduce、按需生成、结构和 cue 校验策略。
+- [x] 编写本地存储与个人内容 ADR，冻结配置、SQLite、Markdown、迁移和不可覆盖用户资产边界。
+- [x] 编写命令、distribution 与版本 ADR，记录改名、双入口、0.1.1 迁移和 0.2.0 版本线。
 
 ## 4. 修复输入、认证与异常分类
 
-- [ ] 将纯参数和视频输入解析移动到任何凭据或网络 I/O 之前，并把解析结果传入后续选择流程。
-- [ ] 把登录流程和已认证提取流程的中断处理分开，保持认证命令的既有取消语义。
-- [ ] 用端口声明的稳定错误替换完整流程中的兜底 `except Exception`，保持预期局部失败和 `0|1|2`。
-- [ ] 在 CLI 最外层脱敏处理未知异常，验证异常文本、响应正文、Cookie 和签名 URL 均不泄漏。
+- [x] 将纯参数和视频输入解析移动到任何凭据或网络 I/O 之前，并把解析结果传入后续选择流程。
+- [x] 把登录流程和已认证提取流程的中断处理分开，保持认证命令的既有取消语义。
+- [x] 用端口声明的稳定错误替换完整流程中的兜底 `except Exception`，保持预期局部失败和 `0|1|2`。
+- [x] 在 CLI 最外层脱敏处理未知异常，验证异常文本、响应正文、Cookie 和签名 URL 均不泄漏。
 
 ## 5. 建立可复用导出端口
 
-- [ ] 在应用层定义 `ExportPort` 及输出计划、发布请求和部分发布错误等边界类型。
-- [ ] 将路径规划、历史 manifest 读取、SRT 渲染、批量文件发布和 manifest 发布改为端口调用。
-- [ ] 用现有文件导出逻辑实现基础设施适配器，并由两个 CLI 入口在组合根注入。
-- [ ] 删除应用层对具体导出模块的导入，同时证明文件命名、原子性、历史复用和 manifest schema 不变。
+- [x] 在应用层定义 `ExportPort` 及输出计划、发布请求和部分发布错误等边界类型。
+- [x] 将路径规划、历史 manifest 读取、SRT 渲染、批量文件发布和 manifest 发布改为端口调用。
+- [x] 用现有文件导出逻辑实现基础设施适配器，并由两个 CLI 入口在组合根注入。
+- [x] 删除应用层对具体导出模块的导入，同时证明文件命名、原子性、历史复用和 manifest schema 不变。
 
 ## 6. 添加 `bili-study` 双命令发行骨架
 
-- [ ] 创建 `bili_study` 包和 CLI 组合根，注册可用的 `extract` 及 `auth login|status|clear`。
-- [ ] 复用现有命令处理器和应用端口，禁止复制输入、认证、字幕、导出或摘要业务规则。
-- [ ] 保持 `bili-subtitle` 原有顶层提取语法和认证子命令，新增固定响应双入口等价测试。
-- [ ] 确认未来 `library/config/plugin/serve/doctor` 不注册，帮助文本不暗示阶段八/九能力可用。
+- [x] 创建 `bili_study` 包和 CLI 组合根，注册可用的 `extract` 及 `auth login|status|clear`。
+- [x] 复用现有命令处理器和应用端口，禁止复制输入、认证、字幕、导出或摘要业务规则。
+- [x] 保持 `bili-subtitle` 原有顶层提取语法和认证子命令，新增固定响应双入口等价测试。
+- [x] 确认未来 `library/config/plugin/serve/doctor` 不注册，帮助文本不暗示阶段八/九能力可用。
 
 ## 7. 完成改名、版本、迁移与交付文档
 
-- [ ] 将 distribution 改为 `bili-study 0.1.1`，统一两个包版本并在同一 wheel 注册两个脚本。
-- [ ] 更新归档校验和隔离安装脚本，校验新 wheel/sdist 名称、双包、双入口及许可证元数据。
-- [ ] 在隔离 uv tool 目录验证清洁安装，以及“卸载 `bili-subtitle` 后安装 `bili-study`”迁移流程。
-- [ ] 更新 README 与 CHANGELOG，说明当前功能、旧凭据复用、安装/卸载身份和学习能力未实现边界。
+- [x] 将 distribution 改为 `bili-study 0.1.1`，统一两个包版本并在同一 wheel 注册两个脚本。
+- [x] 更新归档校验和隔离安装脚本，校验新 wheel/sdist 名称、双包、双入口及许可证元数据。
+- [x] 在隔离 uv tool 目录验证清洁安装，以及“卸载 `bili-subtitle` 后安装 `bili-study`”迁移流程。
+- [x] 更新 README 与 CHANGELOG，说明当前功能、旧凭据复用、安装/卸载身份和学习能力未实现边界。
 
 ## 8. 完成回归、审计与阶段关闭
 
-- [ ] 执行 [`validation.md`](./validation.md) 的测试、覆盖率、Ruff、格式、strict Pyright 和 diff 门禁。
-- [ ] 构建 wheel/sdist，完成内容、秘密、许可证、sdist 重建和新 PowerShell 双命令安装检查。
-- [ ] 审计应用依赖方向、运行时依赖和禁止能力，确认未提前引入阶段八/九组件。
-- [ ] 在待合并提交取得 Windows CI 成功证据后，更新三份 Constitution 状态并将阶段七标记完成。
+- [x] 执行 [`validation.md`](./validation.md) 的测试、覆盖率、Ruff、格式、strict Pyright 和 diff 门禁。
+- [x] 构建 wheel/sdist，完成内容、秘密、许可证、sdist 重建和新 PowerShell 双命令安装检查。
+- [x] 审计应用依赖方向、运行时依赖和禁止能力，确认未提前引入阶段八/九组件。
+- [x] 在待合并提交取得 Windows CI 成功证据后，更新三份 Constitution 状态并将阶段七标记完成。

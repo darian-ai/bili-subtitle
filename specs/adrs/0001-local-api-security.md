@@ -2,6 +2,7 @@
 
 - 日期：2026-08-21
 - 状态：Accepted
+- 关联：[`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`阶段七 Feature`](../2026-08-21-v2-compatibility-baseline/requirements.md)
 
 ## 上下文
 
@@ -17,4 +18,12 @@
 
 ## 后果
 
-用户需要显式配对；服务实现必须有独立安全测试。阶段七仅冻结契约，不添加服务依赖。
+用户需要显式配对；服务实现必须有独立安全测试。限制 loopback 会排除局域网直接访问，配对与逐请求校验也会增加实现复杂度。
+
+## 安全与隐私影响
+
+该决定降低恶意网页、DNS rebinding、跨 Origin 调用和扩展凭据泄漏风险，但 localhost 不能被视为可信边界；阶段九仍必须对 Host、Origin、token 生命周期、请求限制和日志脱敏分别测试。
+
+## 后续阶段约束
+
+阶段七仅冻结契约，不添加服务依赖。阶段九实现 Local API 时不得提供公开监听、通配 CORS、关闭认证或把凭据交给扩展的生产选项；改变这些边界需要新的 ADR。
