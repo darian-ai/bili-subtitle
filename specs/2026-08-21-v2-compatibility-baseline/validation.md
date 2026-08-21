@@ -4,7 +4,7 @@
 
 - 2026-08-22 本地关闭验收：224 项离线测试通过，分支覆盖率 90.82%；许可证清单覆盖 40 个锁定依赖；Ruff、格式、strict Pyright、构建、归档、sdist 重建、旧 `bili-subtitle 0.1.0` 卸载迁移和隔离双命令安装通过。
 - 基线实现提交：`84626659c62694e851f869df9ade341f8dabd9cb`。
-- Windows GitHub Actions：Quality run [32502973696](https://github.com/darian-ai/bili-subtitle/actions/runs/32502973696) 成功；同一提交的前次 run [32502711510](https://github.com/darian-ai/bili-subtitle/actions/runs/32502711510) 亦成功。
+- Windows GitHub Actions：关闭提交 `6e1c029f7e7c1c4c16663ab3929315e05fde538b` 的 Quality run [32504460844](https://github.com/darian-ai/bili-subtitle/actions/runs/32504460844) 全部成功；基线提交的 run [32502973696](https://github.com/darian-ai/bili-subtitle/actions/runs/32502973696) 亦成功。
 - 补充关闭测试集中证明纯输入无 I/O、登录/提取中断分类、双入口共享处理器与 `0|1|2`、凭据槽位、未实现命令和应用依赖方向；四份 ADR 已补齐 Constitution/Feature 链接、安全与隐私影响及后续约束。
 
 ## 自动化质量门禁
