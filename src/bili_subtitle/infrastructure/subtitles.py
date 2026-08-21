@@ -126,11 +126,10 @@ def _parse_track(raw: object) -> _DiscoveredTrack:
     if not isinstance(raw, Mapping):
         raise SubtitlePlatformResponseError("字幕轨道结构异常。")
     item = cast(Mapping[str, object], raw)
-    track_id, language, name, is_ai, url = (
+    track_id, language, name, url = (
         item.get("id"),
         item.get("lan"),
         item.get("lan_doc"),
-        item.get("is_ai"),
         item.get("subtitle_url"),
     )
     if (
@@ -141,15 +140,24 @@ def _parse_track(raw: object) -> _DiscoveredTrack:
         or not language
         or not isinstance(name, str)
         or not name
-        or not isinstance(is_ai, (bool, int))
-        or isinstance(is_ai, float)
-        or is_ai not in {False, True}
         or not isinstance(url, str)
         or not url
     ):
         raise SubtitlePlatformResponseError("字幕轨道字段缺失或类型错误。")
-    kind = SubtitleTrackKind.AI if bool(is_ai) else SubtitleTrackKind.HUMAN
+    kind = _parse_track_kind(item)
     return _DiscoveredTrack(SubtitleTrack(track_id, language, name, kind), url)
+
+
+def _parse_track_kind(item: Mapping[str, object]) -> SubtitleTrackKind:
+    """兼容播放器字幕轨道的新旧 AI 类型字段。"""
+    marker = item.get("is_ai") if "is_ai" in item else item.get("type")
+    if (
+        not isinstance(marker, (bool, int))
+        or isinstance(marker, float)
+        or marker not in {False, True}
+    ):
+        raise SubtitlePlatformResponseError("字幕轨道字段缺失或类型错误。")
+    return SubtitleTrackKind.AI if bool(marker) else SubtitleTrackKind.HUMAN
 
 
 def _safe_subtitle_url(value: str) -> str:
