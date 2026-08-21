@@ -148,7 +148,7 @@ CI 链接。不得记录账号、Cookie、二维码、签名 URL、请求头、�
 - 公开 `main()`、`python -m` 和已安装控制台入口均传播真实整数状态；fresh process 与实际 `.venv` 控制台脚本参数化验证 `0`、`1`、`2`，不再只依赖 Typer 测试 runner 的间接结果。
 - 最终本地门禁：CPython 3.12.13；208 项 pytest 全部通过，分支覆盖率 90.72%；Ruff lint、Ruff format、strict Pyright 与 `git diff --check` 返回 `0`。`uv build`、wheel/sdist 内容与秘密检查、sdist 独立重建、隔离 `uv tool install` 及仓库外新 PowerShell 调用均返回 `0`。
 - 真实平台证据复核：二维码登录与 Credential Manager 复用、AI 轨道 JSON/SRT/manifest 及逐字节重建忠实性、多分集 92 页完整处理、独立单页、默认重复跳过和 `--force` 均已有脱敏通过记录；记录不含投稿、账号、正文或签名地址。早期失败轮次不作为成功证据。
-- 修复提交为 `203cfdf95f2d1409e8b0d65576ac032309366dcf`；控制台门禁提交为 `445946c974ca1f0aac2dd4754cf30b65238fb74b`。最终 HEAD 的 Windows Quality run [`32447448564`](https://github.com/darian-ai/bili-subtitle/actions/runs/32447448564) 成功，锁定同步、全量测试/覆盖率、Ruff、格式、strict Pyright、构建、归档/sdist 重建及隔离安装全部通过。
+- 修复提交为 `203cfdf95f2d1409e8b0d65576ac032309366dcf`；控制台门禁及最终实现候选提交为 `445946c974ca1f0aac2dd4754cf30b65238fb74b`。该实现候选的 Windows Quality run [`32447448564`](https://github.com/darian-ai/bili-subtitle/actions/runs/32447448564) 成功，锁定同步、全量测试/覆盖率、Ruff、格式、strict Pyright、构建、归档/sdist 重建及隔离安装全部通过；完成状态文档提交另以分支最新 CI 为合并门禁。
 
 ### Mission 成功标准结论
 
