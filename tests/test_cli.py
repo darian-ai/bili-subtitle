@@ -327,11 +327,12 @@ def test_help_survives_cp1252_fresh_process() -> None:
     assert "认证命令" in output
 
 
-def test_public_main_preserves_typer_exit_code_in_fresh_process() -> None:
+@pytest.mark.parametrize("expected", [0, 1, 2])
+def test_public_main_preserves_typer_exit_code_in_fresh_process(expected: int) -> None:
     command = (
         "import sys, typer; from bili_subtitle import cli; "
         "app=typer.Typer(); "
-        "app.command()(lambda: (_ for _ in ()).throw(typer.Exit(code=1))); "
+        f"app.command()(lambda: (_ for _ in ()).throw(typer.Exit(code={expected}))); "
         "cli.extract_app=app; sys.argv=['bili-subtitle']; "
         "raise SystemExit(cli.main())"
     )
@@ -344,4 +345,29 @@ def test_public_main_preserves_typer_exit_code_in_fresh_process() -> None:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 1
+    assert result.returncode == expected
+
+
+@pytest.mark.parametrize("expected", [0, 1, 2])
+def test_installed_console_script_preserves_exit_codes(tmp_path: Path, expected: int) -> None:
+    sitecustomize = tmp_path / "sitecustomize.py"
+    sitecustomize.write_text(
+        "import os, typer\n"
+        "from bili_subtitle import cli\n"
+        "app = typer.Typer()\n"
+        "def command():\n"
+        "    raise typer.Exit(code=int(os.environ['EXPECTED']))\n"
+        "app.command()(command)\n"
+        "cli.extract_app = app\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(tmp_path)
+    environment["EXPECTED"] = str(expected)
+    executable = Path(sys.executable).with_name("bili-subtitle.exe")
+
+    result = subprocess.run(
+        [executable], cwd=tmp_path, env=environment, capture_output=True, check=False
+    )
+
+    assert result.returncode == expected
