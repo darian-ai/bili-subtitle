@@ -29,3 +29,10 @@ jobs:
         run: uv run ruff format --check .
       - name: Run Pyright
         run: uv run pyright
+      - name: Build release archives
+        run: uv build
+      - name: Verify release archives
+        run: uv run python scripts/verify_release.py dist --rebuild-sdist
+      - name: Verify isolated uv tool install
+        shell: pwsh
+        run: ./scripts/verify_isolated_install.ps1 -Wheel ./dist/bili_subtitle-0.1.0-py3-none-any.whl

@@ -1,3 +1,3 @@
 from bili_subtitle.cli import main
 
-main()
+raise SystemExit(main())

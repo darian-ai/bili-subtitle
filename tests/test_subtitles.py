@@ -63,8 +63,44 @@ def test_discovers_in_order_and_immediately_downloads_raw_bytes() -> None:
     body = adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=tracks[1])
     assert body.raw_json == raw
     assert body.cues[0].text == "  中文\nline "
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert SIGNED not in repr(tracks) + repr(body)
+
+
+def test_discovers_current_player_track_schema_without_legacy_is_ai() -> None:
+    """播放器当前用 ``type`` 表示 AI 类型，不再保证返回 ``is_ai``。"""
+    adapter = BilibiliSubtitleAdapter(
+        _client(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "subtitle": {
+                            "subtitles": [
+                                {
+                                    "id": 9,
+                                    "id_str": "9",
+                                    "lan": "zh-CN",
+                                    "lan_doc": "中文（自动生成）",
+                                    "type": 1,
+                                    "ai_type": 0,
+                                    "ai_status": 2,
+                                    "is_lock": False,
+                                    "subtitle_url": SIGNED,
+                                }
+                            ]
+                        }
+                    },
+                },
+            )
+        )
+    )
+
+    tracks = adapter.discover(bvid="BV1xx411c7mD", cid=1)
+
+    assert len(tracks) == 1
+    assert tracks[0].kind is SubtitleTrackKind.AI
 
 
 @pytest.mark.parametrize("subtitle", [None, {"subtitles": []}])
@@ -304,3 +340,61 @@ def test_download_rejects_track_not_present_in_fresh_discovery() -> None:
     selected = SubtitleTrack(2, "x", "x", SubtitleTrackKind.HUMAN)
     with pytest.raises(SubtitlePlatformResponseError):
         adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=selected)
+
+
+def test_empty_body_address_is_unavailable_without_hiding_valid_tracks() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "subtitle": {
+                "subtitles": [
+                    {"id": 1, "lan": "x", "lan_doc": "x", "type": 0, "subtitle_url": ""},
+                    {
+                        "id": 2,
+                        "lan": "y",
+                        "lan_doc": "y",
+                        "type": 1,
+                        "subtitle_url": SIGNED,
+                    },
+                ]
+            }
+        },
+    }
+    adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
+    tracks = adapter.discover(bvid="BV1xx411c7mD", cid=1)
+    assert [track.track_id for track in tracks] == [1, 2]
+    with pytest.raises(SubtitleAccessDenied, match="不可访问"):
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=tracks[0])
+
+
+def test_only_empty_body_addresses_are_access_denied_not_no_subtitles() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "subtitle": {
+                "subtitles": [{"id": 1, "lan": "x", "lan_doc": "x", "type": 0, "subtitle_url": ""}]
+            }
+        },
+    }
+    adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
+    track = adapter.discover(bvid="BV1xx411c7mD", cid=1)[0]
+    with pytest.raises(SubtitleAccessDenied, match="不可访问"):
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=track)
+
+
+def test_discard_pending_removes_unselected_signed_addresses() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "subtitle": {
+                "subtitles": [
+                    {"id": 1, "lan": "x", "lan_doc": "x", "type": 0, "subtitle_url": SIGNED}
+                ]
+            }
+        },
+    }
+    adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
+    track = adapter.discover(bvid="BV1xx411c7mD", cid=1)[0]
+    adapter.discard_pending(bvid="BV1xx411c7mD", cid=1)
+    with pytest.raises(SubtitlePlatformResponseError, match="不属于"):
+        adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=track)

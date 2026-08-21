@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import sys
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from typer.main import _click as click
 
 from bili_subtitle.application.auth import login
 from bili_subtitle.application.full_flow import FlowResult, run_extraction
@@ -200,10 +202,29 @@ def auth_clear() -> None:
     typer.echo("凭据已清除。" if removed else "当前没有已保存凭据。")
 
 
-def main() -> None:
+def main() -> int:
     """将公开命令语法分派给对应的 Typer 应用。"""
+    _configure_standard_streams()
     args = sys.argv[1:]
     if args and args[0] == "auth":
-        auth_app(prog_name="bili-subtitle auth", args=args[1:])
-        return
-    extract_app(prog_name="bili-subtitle", args=args)
+        return _run_app(auth_app, prog_name="bili-subtitle auth", args=args[1:])
+    return _run_app(extract_app, prog_name="bili-subtitle", args=args)
+
+
+def _run_app(app: typer.Typer, *, prog_name: str, args: list[str]) -> int:
+    """Return Click's real status so console-script and ``python -m`` agree."""
+    try:
+        result = app(prog_name=prog_name, args=args, standalone_mode=False)
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    return result if isinstance(result, int) else 0
+
+
+def _configure_standard_streams() -> None:
+    """让 Windows 控制台与重定向输出可靠承载公开的中文界面。"""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")

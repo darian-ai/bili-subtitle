@@ -28,27 +28,41 @@ _TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com", ".hdslb.com")
 @dataclass(frozen=True, slots=True)
 class _DiscoveredTrack:
     public: SubtitleTrack
-    url: str = field(repr=False)
+    url: str | None = field(repr=False)
 
 
 class BilibiliSubtitleAdapter:
     def __init__(self, client: httpx.Client) -> None:
         self._client = client
+        self._pending: dict[tuple[str, int, SubtitleTrack], _DiscoveredTrack] = {}
 
     def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
-        return tuple(item.public for item in self._discover_private(bvid=bvid, cid=cid))
+        self.discard_pending(bvid=bvid, cid=cid)
+        discovered = self._discover_private(bvid=bvid, cid=cid)
+        # Signed addresses stay private to this adapter and are consumed once by
+        # download_selected.  Reusing the player response avoids a second request
+        # whose short-lived address set can legitimately differ from discovery.
+        for item in discovered:
+            if (bvid, cid, item.public) in self._pending:
+                self.discard_pending(bvid=bvid, cid=cid)
+                raise SubtitlePlatformResponseError("字幕轨道身份重复。")
+            self._pending[(bvid, cid, item.public)] = item
+        return tuple(item.public for item in discovered)
 
     def download_selected(self, *, bvid: str, cid: int, selected: SubtitleTrack) -> SubtitleBody:
-        # Re-fetch the short-lived player response instead of retaining signed URLs
-        # between public calls.  Once the selected URL is obtained, consume it in
-        # this stack frame immediately and discard every private discovery value.
-        matches = [
-            item for item in self._discover_private(bvid=bvid, cid=cid) if item.public == selected
-        ]
-        if len(matches) != 1:
+        match = self._pending.pop((bvid, cid, selected), None)
+        if match is None:
             raise SubtitlePlatformResponseError("选定轨道不属于本次发现结果。")
-        response = self._get(_safe_subtitle_url(matches[0].url))
+        if match.url is None:
+            raise SubtitleAccessDenied("字幕轨道当前不可访问。")
+        response = self._get(_safe_subtitle_url(match.url))
         return _parse_body(response.content)
+
+    def discard_pending(self, *, bvid: str, cid: int) -> None:
+        """Drop every unconsumed signed address at the end of one page."""
+        self._pending = {
+            key: value for key, value in self._pending.items() if key[:2] != (bvid, cid)
+        }
 
     def _discover_private(self, *, bvid: str, cid: int) -> tuple[_DiscoveredTrack, ...]:
         response = self._get(_PLAYER_API, params={"bvid": bvid, "cid": cid})
@@ -126,11 +140,10 @@ def _parse_track(raw: object) -> _DiscoveredTrack:
     if not isinstance(raw, Mapping):
         raise SubtitlePlatformResponseError("字幕轨道结构异常。")
     item = cast(Mapping[str, object], raw)
-    track_id, language, name, is_ai, url = (
+    track_id, language, name, url = (
         item.get("id"),
         item.get("lan"),
         item.get("lan_doc"),
-        item.get("is_ai"),
         item.get("subtitle_url"),
     )
     if (
@@ -141,15 +154,25 @@ def _parse_track(raw: object) -> _DiscoveredTrack:
         or not language
         or not isinstance(name, str)
         or not name
-        or not isinstance(is_ai, (bool, int))
-        or isinstance(is_ai, float)
-        or is_ai not in {False, True}
         or not isinstance(url, str)
-        or not url
     ):
         raise SubtitlePlatformResponseError("字幕轨道字段缺失或类型错误。")
-    kind = SubtitleTrackKind.AI if bool(is_ai) else SubtitleTrackKind.HUMAN
-    return _DiscoveredTrack(SubtitleTrack(track_id, language, name, kind), url)
+    kind = _parse_track_kind(item)
+    # An advertised track with no body address is distinct from an empty track
+    # collection.  Preserve its public identity and classify access on download.
+    return _DiscoveredTrack(SubtitleTrack(track_id, language, name, kind), url or None)
+
+
+def _parse_track_kind(item: Mapping[str, object]) -> SubtitleTrackKind:
+    """兼容播放器字幕轨道的新旧 AI 类型字段。"""
+    marker = item.get("is_ai") if "is_ai" in item else item.get("type")
+    if (
+        not isinstance(marker, (bool, int))
+        or isinstance(marker, float)
+        or marker not in {False, True}
+    ):
+        raise SubtitlePlatformResponseError("字幕轨道字段缺失或类型错误。")
+    return SubtitleTrackKind.AI if bool(marker) else SubtitleTrackKind.HUMAN
 
 
 def _safe_subtitle_url(value: str) -> str:
