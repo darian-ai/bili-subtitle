@@ -21,14 +21,16 @@ runner = CliRunner()
 
 
 def test_distribution_and_both_packages_share_one_version_source() -> None:
-    assert bili_study.__version__ == version("bili-study") == "0.1.1"
+    assert bili_study.__version__ == version("bili-study") == "0.2.0.dev1"
 
 
 def test_bili_study_exposes_only_implemented_command_tree() -> None:
     result = runner.invoke(study_app, ["--help"])
     assert result.exit_code == 0
     assert "extract" in result.output and "auth" in result.output
-    for unavailable in ("library", "config", "plugin", "serve", "doctor"):
+    for implemented in ("library", "config", "transcript", "guide", "chapter", "note"):
+        assert implemented in result.output
+    for unavailable in ("plugin", "serve", "doctor"):
         assert unavailable not in result.output
 
 
@@ -153,7 +155,7 @@ def test_new_console_main_preserves_shared_exit_codes(
 
 
 def test_unknown_commands_are_real_parameter_errors() -> None:
-    for command in ("library", "config", "plugin", "serve", "doctor"):
+    for command in ("plugin", "serve", "doctor"):
         result = runner.invoke(study_app, [command])
         assert result.exit_code == 2
         assert command not in runner.invoke(study_app, ["--help"]).output

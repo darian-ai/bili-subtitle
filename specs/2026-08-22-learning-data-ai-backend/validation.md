@@ -1,5 +1,12 @@
 # 阶段八：学习数据与 AI 后端验证及合并标准
 
+## 当前验收证据
+
+- 2026-08-22 离线验收：257 项测试通过，`bili_study` 与 `bili_subtitle` 合并分支覆盖率 90.25%；Ruff、格式和 strict Pyright 通过。
+- `bili-study 0.2.0.dev1` wheel/sdist、sdist 独立重建、旧 `bili-subtitle 0.1.0` 卸载迁移、隔离双命令安装及 40 项许可证审计通过。
+- 固定响应覆盖 Transcript/证据、Map/Reduce、一次修复、缓存、章节详情、Provider 成功与故障、秘密槽位、SQLite migration/损坏/并发、Markdown 和 CLI 取消边界。
+- 真实 OpenAI-compatible Provider 的短/长字幕验收及待合并提交 Windows CI 尚待记录，因此阶段八仍为“进行中”。
+
 ## 自动化质量门禁
 
 在仓库根目录运行项目当前锁定的同步、测试、覆盖率、Ruff、格式、strict Pyright、构建、归档和隔离安装命令。全部命令必须返回 `0`，分支覆盖率不得低于仓库既有 90% 门槛，`git diff --check` 必须通过。

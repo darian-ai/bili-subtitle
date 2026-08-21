@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 PROJECT = "bili_study"
-VERSION = "0.1.1"
+VERSION = "0.2.0.dev1"
 FORBIDDEN_PARTS = {
     ".coverage",
     ".git",

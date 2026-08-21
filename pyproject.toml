@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bili-study"
-version = "0.1.1"
-description = "提取 Bilibili 站内已有字幕的 Windows 优先 CLI"
+version = "0.2.0.dev1"
+description = "基于 Bilibili 站内字幕的本地优先视频学习 CLI"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
@@ -53,6 +53,7 @@ addopts = [
     "--strict-config",
     "--strict-markers",
     "--cov=bili_subtitle",
+    "--cov=bili_study",
     "--cov-branch",
     "--cov-report=term-missing",
     "--cov-fail-under=90",

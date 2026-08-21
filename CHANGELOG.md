@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 0.2.0.dev1
+
+- 新增版本化 Transcript、稳定 cue ID、EvidenceRef 与完整视频证据校验。
+- 新增命名知识库、SQLite migration、生成缓存、个人 Markdown 笔记与可重建指南发布。
+- 新增用户自备 OpenAI-compatible Provider 配置；API Key 仅写入 Windows Credential Manager。
+- 新增完整字幕 Map/Reduce 大纲、一次结构修复、按需章节详情、usage/耗时记录和 Prompt injection 边界。
+- 新增 `library`、`config provider`、`transcript`、`guide`、`chapter` 与 `note` 命令；Local API 和浏览器扩展仍未实现。
+
 ## 0.1.1
 
 - distribution 改名为 `bili-study`，同一发行包提供新 `bili-study extract|auth` 与兼容 `bili-subtitle`。

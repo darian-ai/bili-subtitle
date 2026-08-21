@@ -1,6 +1,6 @@
 # bili-study
 
-当前 `0.1.1` 是 V2 兼容基线：已经可用的是字幕提取与 Bilibili 认证；学习指南、AI、知识库、Local API 和浏览器扩展仍在规划中。
+当前 `0.2.0.dev1` 是阶段八开发版本：除字幕提取与 Bilibili 认证外，已经提供命名知识库、Transcript 导入、用户自备 OpenAI-compatible Provider、证据化学习指南、按需章节详情和个人 Markdown 笔记。Local API 与浏览器扩展仍未实现。
 
 新安装使用 `uv tool install bili-study`，提供 `bili-study extract <视频标识或URL>` 与 `bili-study auth login|status|clear`。原有 `bili-subtitle` 命令继续兼容并复用原 Credential Manager 登录状态。
 
@@ -56,7 +56,7 @@ uv python install 3.12
 
 ```powershell
 uv build
-uv tool install .\dist\bili_study-0.1.1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0.dev1-py3-none-any.whl
 ```
 
 安装完成后验证命令：
@@ -78,7 +78,7 @@ uv tool update-shell
 ```powershell
 git pull
 uv build
-uv tool install .\dist\bili_study-0.1.1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0.dev1-py3-none-any.whl
 ```
 
 卸载：
@@ -109,6 +109,38 @@ bili-subtitle auth clear
 ```
 
 `auth clear` 只删除本机保存的凭据，不会调用 Bilibili 的账号退出接口。
+
+### 阶段八学习后端
+
+先创建命名知识库，并配置用户自备的 OpenAI-compatible Provider。API Key 通过隐藏输入读取，只保存到 Windows Credential Manager：
+
+```powershell
+bili-study library create my-library D:\BiliKnowledge
+bili-study config provider set my-provider https://api.example.com/v1 model-name
+```
+
+从已经提取的原始字幕 JSON 构造版本化 Transcript。导入只读取本地 JSON，不会再次访问 Bilibili：
+
+```powershell
+bili-study transcript import --library my-library .\subtitle.json BV1xx411c7mD 1 123456 "标题" zh-CN "中文（AI）"
+```
+
+生成前会显示 Provider、模型和将上传的 cue 数并要求确认；也可以在自动化环境显式传入 `--yes`。相同生成指纹默认命中本地缓存：
+
+```powershell
+bili-study guide generate --library my-library --provider my-provider
+bili-study guide show --library my-library GUIDE_ID
+bili-study chapter generate --library my-library --provider my-provider GUIDE_ID ch001
+```
+
+个人笔记保存为独立 Markdown 文件，重新生成指南或清理可重建缓存不会覆盖笔记：
+
+```powershell
+bili-study note add --library my-library REVISION_ID 120000 "这里需要复习" --note-type question
+bili-study note list --library my-library REVISION_ID
+```
+
+当前阶段没有 `serve`、浏览器插件、Embedding、跨视频问答、复习或测验命令。
 
 ### 2. 进入希望保存字幕的目录
 
@@ -358,7 +390,7 @@ uv run ruff format --check .
 uv run pyright
 uv build
 uv run python scripts/verify_release.py dist --rebuild-sdist
-.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.1.1-py3-none-any.whl
+.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0.dev1-py3-none-any.whl
 ```
 
 默认自动化测试不访问真实 Bilibili 网络，也不读取本机真实凭据。
