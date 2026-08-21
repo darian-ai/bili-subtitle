@@ -34,20 +34,25 @@ class _DiscoveredTrack:
 class BilibiliSubtitleAdapter:
     def __init__(self, client: httpx.Client) -> None:
         self._client = client
+        self._pending: dict[tuple[str, int, SubtitleTrack], _DiscoveredTrack] = {}
 
     def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
-        return tuple(item.public for item in self._discover_private(bvid=bvid, cid=cid))
+        discovered = self._discover_private(bvid=bvid, cid=cid)
+        # Signed addresses stay private to this adapter and are consumed once by
+        # download_selected.  Reusing the player response avoids a second request
+        # whose short-lived address set can legitimately differ from discovery.
+        self._pending = {
+            key: value for key, value in self._pending.items() if key[:2] != (bvid, cid)
+        }
+        for item in discovered:
+            self._pending[(bvid, cid, item.public)] = item
+        return tuple(item.public for item in discovered)
 
     def download_selected(self, *, bvid: str, cid: int, selected: SubtitleTrack) -> SubtitleBody:
-        # Re-fetch the short-lived player response instead of retaining signed URLs
-        # between public calls.  Once the selected URL is obtained, consume it in
-        # this stack frame immediately and discard every private discovery value.
-        matches = [
-            item for item in self._discover_private(bvid=bvid, cid=cid) if item.public == selected
-        ]
-        if len(matches) != 1:
+        match = self._pending.pop((bvid, cid, selected), None)
+        if match is None:
             raise SubtitlePlatformResponseError("选定轨道不属于本次发现结果。")
-        response = self._get(_safe_subtitle_url(matches[0].url))
+        response = self._get(_safe_subtitle_url(match.url))
         return _parse_body(response.content)
 
     def _discover_private(self, *, bvid: str, cid: int) -> tuple[_DiscoveredTrack, ...]:
@@ -73,7 +78,14 @@ class BilibiliSubtitleAdapter:
             raise SubtitlePlatformResponseError("字幕轨道列表结构异常。")
         if not raw_tracks:
             raise NoSubtitles("该分集没有可见字幕。")
-        return tuple(_parse_track(item) for item in cast(list[object], raw_tracks))
+        parsed = tuple(
+            track
+            for item in cast(list[object], raw_tracks)
+            if (track := _parse_track(item)) is not None
+        )
+        if not parsed:
+            raise NoSubtitles("该分集没有可见字幕。")
+        return parsed
 
     def _get(self, url: str, *, params: dict[str, str | int] | None = None) -> httpx.Response:
         try:
@@ -122,7 +134,7 @@ def _parse_body(raw: bytes) -> SubtitleBody:
     return SubtitleBody(raw, cues)
 
 
-def _parse_track(raw: object) -> _DiscoveredTrack:
+def _parse_track(raw: object) -> _DiscoveredTrack | None:
     if not isinstance(raw, Mapping):
         raise SubtitlePlatformResponseError("字幕轨道结构异常。")
     item = cast(Mapping[str, object], raw)
@@ -141,9 +153,12 @@ def _parse_track(raw: object) -> _DiscoveredTrack:
         or not isinstance(name, str)
         or not name
         or not isinstance(url, str)
-        or not url
     ):
         raise SubtitlePlatformResponseError("字幕轨道字段缺失或类型错误。")
+    # The player API can advertise a legitimate track while withholding its
+    # body address.  It is unavailable, not a malformed response.
+    if not url:
+        return None
     kind = _parse_track_kind(item)
     return _DiscoveredTrack(SubtitleTrack(track_id, language, name, kind), url)
 

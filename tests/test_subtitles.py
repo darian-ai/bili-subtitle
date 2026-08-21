@@ -63,7 +63,7 @@ def test_discovers_in_order_and_immediately_downloads_raw_bytes() -> None:
     body = adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=tracks[1])
     assert body.raw_json == raw
     assert body.cues[0].text == "  中文\nline "
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert SIGNED not in repr(tracks) + repr(body)
 
 
@@ -340,3 +340,39 @@ def test_download_rejects_track_not_present_in_fresh_discovery() -> None:
     selected = SubtitleTrack(2, "x", "x", SubtitleTrackKind.HUMAN)
     with pytest.raises(SubtitlePlatformResponseError):
         adapter.download_selected(bvid="BV1xx411c7mD", cid=1, selected=selected)
+
+
+def test_empty_body_address_is_unavailable_without_hiding_valid_tracks() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "subtitle": {
+                "subtitles": [
+                    {"id": 1, "lan": "x", "lan_doc": "x", "type": 0, "subtitle_url": ""},
+                    {
+                        "id": 2,
+                        "lan": "y",
+                        "lan_doc": "y",
+                        "type": 1,
+                        "subtitle_url": SIGNED,
+                    },
+                ]
+            }
+        },
+    }
+    adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
+    assert [track.track_id for track in adapter.discover(bvid="BV1xx411c7mD", cid=1)] == [2]
+
+
+def test_only_empty_body_addresses_are_no_subtitles() -> None:
+    payload = {
+        "code": 0,
+        "data": {
+            "subtitle": {
+                "subtitles": [{"id": 1, "lan": "x", "lan_doc": "x", "type": 0, "subtitle_url": ""}]
+            }
+        },
+    }
+    adapter = BilibiliSubtitleAdapter(_client(lambda request: httpx.Response(200, json=payload)))
+    with pytest.raises(NoSubtitles):
+        adapter.discover(bvid="BV1xx411c7mD", cid=1)

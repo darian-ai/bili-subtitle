@@ -245,7 +245,8 @@ def test_main_dispatches_extract_arguments(
 ) -> None:
     received: list[tuple[str, list[str]]] = []
 
-    def fake_app(*, prog_name: str, args: list[str]) -> None:
+    def fake_app(*, prog_name: str, args: list[str], standalone_mode: bool) -> None:
+        assert not standalone_mode
         received.append((prog_name, args))
 
     monkeypatch.setattr(cli, "extract_app", fake_app)
@@ -261,7 +262,8 @@ def test_main_dispatches_auth_arguments(
 ) -> None:
     received: list[tuple[str, list[str]]] = []
 
-    def fake_app(*, prog_name: str, args: list[str]) -> None:
+    def fake_app(*, prog_name: str, args: list[str], standalone_mode: bool) -> None:
+        assert not standalone_mode
         received.append((prog_name, args))
 
     typed_fake_app: Callable[..., None] = fake_app
@@ -281,8 +283,9 @@ def test_main_reconfigures_non_utf8_standard_streams(
     stdout = TextIOWrapper(stdout_bytes, encoding="cp1252")
     stderr = TextIOWrapper(stderr_bytes, encoding="cp1252")
 
-    def fake_app(*, prog_name: str, args: list[str]) -> None:
+    def fake_app(*, prog_name: str, args: list[str], standalone_mode: bool) -> None:
         del prog_name, args
+        assert not standalone_mode
         print("中文帮助")
         print("中文错误", file=sys.stderr)
 
@@ -322,3 +325,23 @@ def test_help_survives_cp1252_fresh_process() -> None:
     output = result.stdout.decode("utf-8")
     assert "提取一个普通 UGC 投稿" in output
     assert "认证命令" in output
+
+
+def test_public_main_preserves_typer_exit_code_in_fresh_process() -> None:
+    command = (
+        "import sys, typer; from bili_subtitle import cli; "
+        "app=typer.Typer(); "
+        "app.command()(lambda: (_ for _ in ()).throw(typer.Exit(code=1))); "
+        "cli.extract_app=app; sys.argv=['bili-subtitle']; "
+        "raise SystemExit(cli.main())"
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", command],
+        cwd=Path(__file__).parents[1],
+        env=environment,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 1
