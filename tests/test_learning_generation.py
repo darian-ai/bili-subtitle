@@ -91,11 +91,40 @@ def test_generation_allows_one_json_repair(tmp_path: Path) -> None:
     assert "修复" in chat.requests[1][1]
 
 
+def test_generation_repairs_valid_json_with_invalid_guide_schema(tmp_path: Path) -> None:
+    revision = transcript()
+    repository = StudyRepository(tmp_path / "study.sqlite3")
+    repository.save_transcript(revision)
+    chat = FakeChat(
+        [
+            json.dumps({"chapters": []}),
+            json.dumps({"result": "missing guide schema"}),
+            json.dumps(guide_payload()),
+        ]
+    )
+    result = GuideGenerator(chat, repository).generate(
+        revision, ProviderConfig("p", "https://model.example/v1", "m", context_budget=1000)
+    )
+    assert result.metrics.requests == 3
+    repair = json.loads(chat.requests[2][1])
+    assert repair["task"] == "repair_invalid_output"
+    assert repair["original_task"]["output_schema"]["chapters"]
+
+
+def test_repository_releases_database_handle(tmp_path: Path) -> None:
+    database = tmp_path / "study.sqlite3"
+    repository = StudyRepository(database)
+    repository.save_transcript(transcript())
+    database.unlink()
+    assert not database.exists()
+
+
 def test_generation_rejects_uncovered_or_invalid_evidence(tmp_path: Path) -> None:
     revision = transcript()
     repository = StudyRepository(tmp_path / "study.sqlite3")
     repository.save_transcript(revision)
-    chat = FakeChat([json.dumps({"chapters": []}), json.dumps(guide_payload("c000002"))])
+    invalid = json.dumps(guide_payload("c000002"))
+    chat = FakeChat([json.dumps({"chapters": []}), invalid, invalid])
     with pytest.raises(DomainError, match="完整"):
         GuideGenerator(chat, repository).generate(
             revision, ProviderConfig("p", "https://model.example/v1", "m", context_budget=1000)

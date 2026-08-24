@@ -7,6 +7,8 @@ import os
 import shutil
 import sqlite3
 import tempfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -139,14 +141,20 @@ class StudyRepository:
         database.parent.mkdir(parents=True, exist_ok=True)
         self._migrate()
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Generator[sqlite3.Connection]:
+        connection: sqlite3.Connection | None = None
         try:
             connection = sqlite3.connect(self.database, timeout=5)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
-            return connection
+            with connection:
+                yield connection
         except sqlite3.Error as exc:
             raise StorageError("无法打开学习数据库。") from exc
+        finally:
+            if connection is not None:
+                connection.close()
 
     def _migrate(self) -> None:
         existed = self.database.exists() and self.database.stat().st_size > 0
