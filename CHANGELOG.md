@@ -6,6 +6,7 @@
 - 新增命名知识库、SQLite migration、生成缓存、个人 Markdown 笔记与可重建指南发布。
 - 新增用户自备 OpenAI-compatible Provider 配置；API Key 仅写入 Windows Credential Manager。
 - 新增完整字幕 Map/Reduce 大纲、一次结构修复、按需章节详情、usage/耗时记录和 Prompt injection 边界。
+- 根据真实 Provider 验收将生成提示契约升级为 v2，使合法 JSON 的 schema/证据错误也进入一次受控修复，并确保 SQLite 连接确定性释放。
 - 新增 `library`、`config provider`、`transcript`、`guide`、`chapter` 与 `note` 命令；Local API 和浏览器扩展仍未实现。
 
 ## 0.1.1

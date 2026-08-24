@@ -7,7 +7,7 @@
 | Feature | Learning Data and AI Backend |
 | 工作分支 | `feature/learning-data-ai-backend` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 工程实现、离线验收及分支 CI 完成；待真实 Provider 验收 |
+| 状态 | 已完成 |
 | 日期 | 2026-08-22 |
 
 ## 背景与目标

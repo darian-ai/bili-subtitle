@@ -2,11 +2,14 @@
 
 ## 当前验收证据
 
-- 2026-08-22 离线验收：257 项测试通过，`bili_study` 与 `bili_subtitle` 合并分支覆盖率 90.25%；Ruff、格式和 strict Pyright 通过。
+- 2026-08-24 最终离线验收：259 项测试通过，`bili_study` 与 `bili_subtitle` 合并分支覆盖率 90.32%；Ruff、格式和 strict Pyright 通过。
 - `bili-study 0.2.0.dev1` wheel/sdist、sdist 独立重建、旧 `bili-subtitle 0.1.0` 卸载迁移、隔离双命令安装及 40 项许可证审计通过。
 - 固定响应覆盖 Transcript/证据、Map/Reduce、一次修复、缓存、章节详情、Provider 成功与故障、秘密槽位、SQLite migration/损坏/并发、Markdown 和 CLI 取消边界。
-- 待合并提交 `800279807d005bc80533b5453764f9b687343418` 的 Windows Quality run [32513719400](https://github.com/darian-ai/bili-subtitle/actions/runs/32513719400) 全部成功。
-- 当前机器没有已配置的测试 Provider；真实 OpenAI-compatible Provider 的短/长字幕验收尚待记录，因此阶段八仍为“进行中”。
+- 真实 Provider 首轮验收发现合法 JSON 缺少指南顶层 schema，并发现 Windows 临时 SQLite 句柄未立即释放；提交 `16e33ff766c5aa41bbabc91a2193d99e51e45b2f` 将提示契约升级为 v2、把一次受控修复扩展到 schema/证据校验，并确保 repository 连接退出即关闭。
+- 2026-08-24 使用用户自备 OpenAI-compatible DeepSeek `deepseek-v4-flash` 和合成短字幕验收：1 个 Map 分块加 Reduce，共 2 次请求，生成 1 个章节，首尾 cue 完整覆盖，token usage 可用。
+- 2026-08-24 使用同一 Provider、模型和合成长字幕强制 1000 字符预算验收：3 个 Map 分块加 Reduce，共 4 次请求，生成 3 个章节，首尾 cue 及视频尾部完整覆盖，token usage 可用。
+- 真实验收未记录 API Key、请求/响应正文、真实字幕或个人笔记；临时数据库已在验收退出时删除。
+- 待合并提交 `16e33ff766c5aa41bbabc91a2193d99e51e45b2f` 的 Windows Quality run [32700707183](https://github.com/darian-ai/bili-subtitle/actions/runs/32700707183) 全部成功；阶段八完成条件全部满足。
 
 ## 自动化质量门禁
 

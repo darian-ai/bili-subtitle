@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | V1、V2 兼容基线及阶段八学习后端已实现；离线/CI 已通过、真实 Provider 待验收，Local API 与扩展尚未接入 |
-| 最后更新 | 2026-08-22 |
+| 当前状态 | V1、V2 兼容基线及阶段八学习后端已完成；Local API 与扩展尚未接入 |
+| 最后更新 | 2026-08-24 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
 
@@ -37,7 +37,7 @@
 | 字幕与文件 | dataclasses、Decimal、JSON、pathlib、原子写入 | 已实现 | 原始 JSON、忠实 SRT、manifest 和 Windows 路径安全 |
 | 本地 API | FastAPI、Pydantic、Uvicorn | 计划采用 | 只绑定 loopback，提供版本化 JSON/OpenAPI 接口 |
 | 本地状态 | 标准库 SQLite | 阶段八已实现 | 库注册、Transcript、任务、缓存、个人内容索引和 schema migration；FTS 后续实现 |
-| 云端模型 | OpenAI-compatible Chat Completions | 阶段八已实现，待真实验收 | 用户自备 HTTPS URL、模型与 Credential Manager Key；适配器与领域隔离 |
+| 云端模型 | OpenAI-compatible Chat Completions | 阶段八已完成 | 用户自备 HTTPS URL、模型与 Credential Manager Key；适配器与领域隔离 |
 | 向量检索 | SQLite FTS5 + 可替换向量端口 | 后续计划 | 首个实现计划锁定 `sqlite-vec`，不属于插件原型 |
 | 扩展框架 | WXT、TypeScript、React、Manifest V3 | 计划采用 | Chrome/Edge 侧栏、内容脚本、后台脚本和构建 |
 | JavaScript 工具 | Node.js 24、npm lockfile | 计划采用 | `npm ci` 提供可重现依赖和 CI |
@@ -281,6 +281,7 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-24 | 阶段八技术验收完成：OpenAI-compatible DeepSeek 合成短/长字幕真实调用验证 Map/Reduce、完整证据覆盖和 usage；提示契约升级为 v2，SQLite 连接确定性释放，最终 Windows CI 全绿。 |
 | 2026-08-22 | 阶段八工程、离线门禁与 Windows CI 完成：版本化学习领域、SQLite migration/任务/缓存、Provider/Key、证据化两阶段生成和 Markdown 发布接入 `0.2.0.dev1`；真实 Provider 待验收。 |
 | 2026-08-22 | 阶段七技术基线完成：双 CLI、导出端口、异常边界、Apache-2.0、依赖审计、归档和隔离迁移门禁已实现；阶段八/九组件仍为计划采用。 |
 | 2026-08-21 | 批准 V2 目标架构：`bili-study` CLI、FastAPI loopback 服务、WXT/React Chrome/Edge 侧栏、OpenAI-compatible 模型、版本化 Transcript/证据、SQLite 状态和可移植 Markdown；新增技术均标记为计划采用。 |

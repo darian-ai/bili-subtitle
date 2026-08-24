@@ -54,5 +54,5 @@
 - [x] 组合知识库、Provider、Transcript、指南、章节和笔记命令，保持应用层端口边界。
 - [x] 更新 README、CHANGELOG 和必要的 Constitution 状态，真实区分阶段八与阶段九能力。
 - [x] 执行 [`validation.md`](./validation.md) 的全部离线质量、构建、安装、秘密和 V1 回归门禁。
-- [ ] 记录脱敏真实 Provider 验收和待合并 Windows CI 证据后，才将阶段八标记完成。
+- [x] 记录脱敏真实 Provider 验收和待合并 Windows CI 证据后，才将阶段八标记完成。
 
