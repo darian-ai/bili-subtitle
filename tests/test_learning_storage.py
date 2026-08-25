@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -115,6 +117,31 @@ def test_repository_roundtrip_cache_and_personal_note(tmp_path: Path) -> None:
         repository.finish_task("missing", "failed", "error", "end")
     with pytest.raises(StorageError, match="revision 不存在"):
         repository.get_transcript("missing")
+
+
+def test_legacy_transcript_is_preserved_and_only_exact_source_can_upgrade(tmp_path: Path) -> None:
+    repository = StudyRepository(tmp_path / "legacy.sqlite3")
+    verified = transcript()
+    legacy_payload = asdict(verified)
+    legacy_payload.pop("source_verification")
+    legacy_payload.pop("page_identity_source")
+    with repository.connect() as connection:
+        connection.execute(
+            "INSERT INTO transcripts VALUES (?, ?, ?)",
+            (verified.revision_id, verified.content_sha256, json.dumps(legacy_payload)),
+        )
+    legacy = repository.get_transcript(verified.revision_id)
+    assert legacy.source_verification == "legacy_unverified"
+    assert legacy.page_identity_source == "legacy_record"
+
+    repository.save_transcript(replace(verified, cid=999))
+    assert (
+        repository.get_transcript(verified.revision_id).source_verification == "legacy_unverified"
+    )
+    repository.save_transcript(verified)
+    upgraded = repository.get_transcript(verified.revision_id)
+    assert upgraded.source_verification == "verified"
+    assert upgraded.cues == legacy.cues
 
 
 def test_repository_migration_backup_and_corruption(tmp_path: Path) -> None:

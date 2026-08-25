@@ -234,10 +234,31 @@ class StudyRepository:
 
     def save_transcript(self, transcript: TranscriptRevision) -> None:
         with self.connect() as connection:
-            connection.execute(
-                "INSERT OR IGNORE INTO transcripts VALUES (?, ?, ?)",
-                (transcript.revision_id, transcript.content_sha256, to_json(transcript)),
+            existing = connection.execute(
+                "SELECT payload FROM transcripts WHERE revision_id = ?", (transcript.revision_id,)
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO transcripts VALUES (?, ?, ?)",
+                    (transcript.revision_id, transcript.content_sha256, to_json(transcript)),
+                )
+                return
+            saved = transcript_from_dict(json.loads(str(existing["payload"])))
+            same_source = (
+                saved.bvid == transcript.bvid
+                and saved.page == transcript.page
+                and saved.cid == transcript.cid
+                and saved.content_sha256 == transcript.content_sha256
             )
+            if (
+                same_source
+                and saved.source_verification == "legacy_unverified"
+                and transcript.source_verification == "verified"
+            ):
+                connection.execute(
+                    "UPDATE transcripts SET content_hash = ?, payload = ? WHERE revision_id = ?",
+                    (transcript.content_sha256, to_json(transcript), transcript.revision_id),
+                )
 
     def get_transcript(self, revision_id: str) -> TranscriptRevision:
         with self.connect() as connection:

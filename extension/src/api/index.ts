@@ -23,9 +23,9 @@ export type { SourceRequest } from './models/SourceRequest';
 export type { StudyWorkspaceResponse } from './models/StudyWorkspaceResponse';
 export type { TranscriptCueResponse } from './models/TranscriptCueResponse';
 export { TranscriptPrepareRequest } from './models/TranscriptPrepareRequest';
-export type { TranscriptResponse } from './models/TranscriptResponse';
+export { TranscriptResponse } from './models/TranscriptResponse';
 export type { ValidationError } from './models/ValidationError';
-export type { VideoInspectRequest } from './models/VideoInspectRequest';
+export { VideoInspectRequest } from './models/VideoInspectRequest';
 export type { VideoWorkspaceLookup } from './models/VideoWorkspaceLookup';
 
 export { DefaultService } from './services/DefaultService';

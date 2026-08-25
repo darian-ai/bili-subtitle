@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   localApi: vi.fn(), storedGuide: false,
+  transcriptOnly: false,
   workspace: undefined as undefined | Record<string, unknown>,
 }));
 
@@ -97,6 +98,7 @@ beforeEach(async () => {
     },
   } });
   mocks.storedGuide = false;
+  mocks.transcriptOnly = false;
   mocks.workspace = undefined;
   mocks.localApi.mockImplementation(async (request: { operation: string; jobId?: string; args?: any }) => {
     if (request.operation === "health") return { status: "ok" };
@@ -114,7 +116,8 @@ beforeEach(async () => {
       bvid: request.args?.bvid,
       page: request.args?.page,
       guide_id: mocks.storedGuide && request.args?.bvid === "BV1xx411c7mD" ? "guide-1" : null,
-      revision_id: mocks.storedGuide && request.args?.bvid === "BV1xx411c7mD" ? "revision-1" : null,
+      revision_id: (mocks.storedGuide || mocks.transcriptOnly)
+        && request.args?.bvid === "BV1xx411c7mD" ? "revision-1" : null,
     };
     if (request.operation === "job" && request.jobId === "inspect-job") return {
       status: "succeeded", progress: { phase: "completed", percent: 100 },
@@ -169,6 +172,7 @@ it("prepares a server-bound transcript and generates only from its revision", as
     .map(([value]) => value)
     .find((value: any) => value.operation === "prepare-transcript") as any;
   expect(prepare.args.requestBody).toMatchObject({
+    inspect_job_id: "inspect-job",
     track_id: "2080600637229272576",
     track_language: "zh",
     track_display_name: "中文",
@@ -182,6 +186,33 @@ it("prepares a server-bound transcript and generates only from its revision", as
     revision_id: "revision-1", expected_bvid: "BV1xx411c7mD", expected_page: 1,
   });
   expect(request.args.requestBody).not.toHaveProperty("cid");
+});
+
+it("does not mistake a transcript-only workspace for an existing guide", async () => {
+  mocks.transcriptOnly = true;
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const sendMessage = chrome.tabs.sendMessage as ReturnType<typeof vi.fn>;
+  sendMessage.mockResolvedValue({
+    supported: true, bvid: "BV1yy411c7mD", page: 1, currentTimeMs: 0,
+  });
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1yy411c7mD", page: 1, currentTimeMs: 0 },
+  }));
+  sendMessage.mockResolvedValue({
+    supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0,
+  });
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0 },
+  }));
+  await flush();
+  expect(container.textContent).toContain("尚未创建学习大纲");
+  await flush(() => button("检查字幕").click());
+  await flush(() => button("创建轻量学习大纲").click());
+  expect(container.textContent).toContain("确认发送字幕");
+  expect(mocks.localApi.mock.calls.some(([value]) => value.operation === "guide")).toBe(false);
 });
 
 it("isolates navigation events by tab and restores a video session", async () => {

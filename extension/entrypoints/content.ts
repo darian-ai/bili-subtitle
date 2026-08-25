@@ -1,7 +1,34 @@
-import { parseVideoContext } from "../src/video-context";
+import { resolveVideoContext, type VideoPodSnapshot } from "../src/video-context";
+
+function videoPodSnapshot(): VideoPodSnapshot | undefined {
+  const items = [...document.querySelectorAll<HTMLElement>(".video-pod__item")];
+  if (!items.length) return undefined;
+  const selectedIndex = items.findIndex((item) =>
+    item.matches(".active, .simple-base-item.active")
+    || item.querySelector(".active, .simple-base-item.active") !== null);
+  if (selectedIndex < 0) return {};
+  const selected = items[selectedIndex]!;
+  const playerItems = [...document.querySelectorAll<HTMLElement>(".bpx-state-multi-list li, .bpx-state-multi-item")];
+  let playerIndex = playerItems.findIndex((item) => item.classList.contains("bpx-state-multi-active-item"));
+  if (playerIndex < 0) {
+    const activePlayer = document.querySelector<HTMLElement>(".bpx-state-multi-active-item");
+    if (activePlayer?.parentElement) {
+      playerIndex = [...activePlayer.parentElement.children].indexOf(activePlayer);
+    }
+  }
+  return {
+    ...(selected.dataset.key ? { selectedBvid: selected.dataset.key } : {}),
+    selectedIndex, total: items.length,
+    ...(playerIndex < 0 ? {} : { playerIndex }),
+  };
+}
 
 function context() {
-  return parseVideoContext(location.href, document.querySelector<HTMLVideoElement>("video")?.currentTime ?? 0);
+  return resolveVideoContext(
+    location.href,
+    document.querySelector<HTMLVideoElement>("video")?.currentTime ?? 0,
+    videoPodSnapshot(),
+  );
 }
 
 export default defineContentScript({
@@ -23,15 +50,27 @@ export default defineContentScript({
       return true;
     });
 
-    let previous = location.href;
+    let previous = "";
+    let scheduled: number | undefined;
     const notifyNavigation = () => {
-      if (previous !== location.href) {
-        previous = location.href;
-        chrome.runtime.sendMessage({ type: "content-video-navigation", context: context() }).catch(() => undefined);
-      }
+      if (scheduled !== undefined) return;
+      scheduled = window.setTimeout(() => {
+        scheduled = undefined;
+        const next = context();
+        const fingerprint = JSON.stringify({
+          supported: next.supported, bvid: next.bvid, page: next.page,
+          identity_state: next.identity_state, identity_evidence: next.identity_evidence,
+          collection_index: next.collection_index, collection_total: next.collection_total,
+        });
+        if (previous === fingerprint) return;
+        previous = fingerprint;
+        chrome.runtime.sendMessage({ type: "content-video-navigation", context: next }).catch(() => undefined);
+      }, 100);
     };
     window.addEventListener("popstate", notifyNavigation);
     const observer = new MutationObserver(notifyNavigation);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ["class", "data-key"] });
+    notifyNavigation();
   }
 });

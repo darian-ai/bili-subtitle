@@ -1,16 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { activeChapter, activeCue, parseVideoContext } from "../src/video-context";
+import { activeChapter, activeCue, parseVideoContext, resolveVideoContext } from "../src/video-context";
 
 describe("video context", () => {
   it("recognizes BV, P and playback time", () => {
     expect(parseVideoContext("https://www.bilibili.com/video/BV1xx411c7mD?p=3", 12.345)).toEqual({
-      supported: true, bvid: "BV1xx411c7mD", page: 3, currentTimeMs: 12345
+      supported: true, bvid: "BV1xx411c7mD", page: 3, identity_state: "resolved",
+      identity_evidence: "url_page", currentTimeMs: 12345
     });
   });
 
   it("rejects unsupported pages and invalid P", () => {
     expect(parseVideoContext("https://example.com/video/BV1xx411c7mD", 0).supported).toBe(false);
-    expect(parseVideoContext("https://www.bilibili.com/video/BV1xx411c7mD?p=no", 0).page).toBe(1);
+    expect(parseVideoContext("https://www.bilibili.com/video/BV1xx411c7mD?p=no", 0).identity_state)
+      .toBe("ambiguous");
+  });
+
+  it("binds a multi-BV video pod item and blocks transitional conflicts", () => {
+    expect(resolveVideoContext("https://www.bilibili.com/video/BV1yy411c7mD", 1, {
+      selectedBvid: "BV1yy411c7mD", selectedIndex: 2, playerIndex: 2, total: 10,
+    })).toMatchObject({
+      bvid: "BV1yy411c7mD", page: 1, identity_state: "resolved",
+      identity_evidence: "video_pod_item", collection_index: 3, collection_total: 10,
+    });
+    expect(resolveVideoContext("https://www.bilibili.com/video/BV1xx411c7mD", 1, {
+      selectedBvid: "BV1yy411c7mD", selectedIndex: 2, playerIndex: 2, total: 10,
+    }).identity_state).toBe("transitioning");
+    expect(resolveVideoContext("https://www.bilibili.com/video/BV1xx411c7mD", 1, {})
+      .identity_state).toBe("transitioning");
   });
 
   it("follows a chapter without pausing or generating", () => {

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type TranscriptPrepareRequest = {
+    inspect_job_id: string;
     library: string;
     track_display_name: string;
     track_id: string;

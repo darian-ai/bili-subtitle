@@ -30,3 +30,17 @@ test("evidence seek stays within two seconds", async ({ page }) => {
   const actual = await page.evaluate(() => (window as any).seek(12_345));
   expect(Math.abs(actual - 12_345)).toBeLessThanOrEqual(2_000);
 });
+
+test("a multi-BV video pod exposes one stable active BVID and collection index", async ({ page }) => {
+  await page.setContent(`<section class="video-pod__list">
+    <div class="video-pod__item" data-key="BV1xx411c7mD"><button class="simple-base-item">一</button></div>
+    <div class="video-pod__item" data-key="BV1yy411c7mD"><button class="simple-base-item active">二</button></div>
+    <div class="video-pod__item" data-key="BV1zz411c7mD"><button class="simple-base-item">三</button></div>
+  </section><ol><li></li><li class="bpx-state-multi-active-item"></li><li></li></ol>`);
+  const identity = await page.evaluate(() => {
+    const items = [...document.querySelectorAll<HTMLElement>(".video-pod__item")];
+    const index = items.findIndex((item) => item.querySelector(".simple-base-item.active"));
+    return { bvid: items[index]?.dataset.key, index: index + 1, total: items.length };
+  });
+  expect(identity).toEqual({ bvid: "BV1yy411c7mD", index: 2, total: 3 });
+});

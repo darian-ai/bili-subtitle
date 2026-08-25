@@ -146,7 +146,7 @@ def test_api_pair_auth_cors_schema_and_personal_note(
     client, headers = paired_client(paths)
     with client:
         health = client.get("/api/v1/health")
-        assert health.json() == {"status": "ok", "api_version": "1.2.0"}
+        assert health.json() == {"status": "ok", "api_version": "1.3.0"}
         assert client.get("/api/v1/libraries", headers={"Origin": ORIGIN}).status_code == 401
         libraries = client.get("/api/v1/libraries", headers=headers)
         assert libraries.status_code == 200 and libraries.json()["libraries"][0]["name"] == "main"
@@ -240,7 +240,7 @@ def test_api_rejects_host_origin_pair_reuse_and_large_request(
 
 def test_openapi_is_versioned_and_declares_bearer_security(paths: AppPaths) -> None:
     schema = create_app(paths=paths).openapi()
-    assert schema["info"]["version"] == "1.2.0"
+    assert schema["info"]["version"] == "1.3.0"
     assert "/api/v1/reflections" in schema["paths"]
     assert "/api/v1/study-guides/{guide_id}/workspace" in schema["paths"]
     assert "/api/v1/videos/{bvid}/pages/{page}/transcripts" in schema["paths"]
@@ -482,7 +482,19 @@ def test_async_api_routes_and_guide_read_model(
     monkeypatch.setattr(
         api_module,
         "_inspect_job",
-        lambda _paths, raw, _progress: {"bvid": raw["bvid"], "tracks": []},
+        lambda _paths, raw, _progress: {
+            "bvid": raw["bvid"],
+            "page": raw["page"],
+            "cid": 10,
+            "tracks": [
+                {
+                    "track_id": "9",
+                    "language": "zh-CN",
+                    "display_name": "中文",
+                    "kind": "human",
+                }
+            ],
+        },
     )
     monkeypatch.setattr(
         api_module,
@@ -526,11 +538,26 @@ def test_async_api_routes_and_guide_read_model(
         )
         assert inspect.status_code == 202
         assert _wait_api_job(client, inspect.json()["job_id"], headers)["status"] == "succeeded"
+        mismatched = client.post(
+            "/api/v1/videos/BV1yy411c7mD/pages/1/transcripts",
+            headers=headers,
+            json={
+                "library": "main",
+                "inspect_job_id": inspect.json()["job_id"],
+                "track_id": "9",
+                "track_language": "zh-CN",
+                "track_display_name": "中文",
+                "track_kind": "human",
+            },
+        )
+        assert mismatched.status_code == 409
+        assert mismatched.json()["error"]["code"] == "inspection_source_mismatch"
         prepared = client.post(
             f"/api/v1/videos/{transcript.bvid}/pages/1/transcripts",
             headers=headers,
             json={
                 "library": "main",
+                "inspect_job_id": inspect.json()["job_id"],
                 "track_id": "9",
                 "track_language": "zh-CN",
                 "track_display_name": "中文",
@@ -731,7 +758,7 @@ def test_platform_inspect_and_transcript_download_adapters(
         {
             "bvid": "BV1xx411c7mD",
             "page": 2,
-            "cid": 55,
+            "inspected_cid": 55,
             "title": "标题",
             "track_id": "2080600637229272576",
         }
@@ -745,6 +772,7 @@ def test_platform_inspect_and_transcript_download_adapters(
             "library": "main",
             "bvid": "BV1xx411c7mD",
             "page": 2,
+            "inspected_cid": 55,
             "track_id": "2080600637229272576",
             "track_language": "zh-CN",
             "track_display_name": "中文",
@@ -762,7 +790,7 @@ def test_platform_inspect_and_transcript_download_adapters(
             {
                 "bvid": "BV1xx411c7mD",
                 "page": 2,
-                "cid": 55,
+                "inspected_cid": 55,
                 "title": "标题",
                 "track_id": 999,
             }

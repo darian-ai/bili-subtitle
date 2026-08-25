@@ -35,11 +35,13 @@
 
 ### 多 P 来源强绑定与字幕时间轴
 
-- 检查接口只发现规范 BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库与选定轨道描述，后端必须重新解析 BV/P→CID，客户端不得提交 CID 或标题。
+- 普通同 BV 多 P 以 URL 的显式 `p=N` 为分集身份；站内 `video-pod` 多 BV 选集以激活项 `data-key` 的 BV、激活序号及播放器选中序号交叉确认，集合序号只显示为“选集第 N 项”，不得冒充 P。当前仅支持操作当前选中视频，不包含合集批量导入或同步。
+- URL、选集 DOM 与播放器状态不一致的切换瞬间标记为 `transitioning/ambiguous`，禁止检查、加载字幕或生成；内容脚本按完整身份指纹通知，不得只依赖 `location.href` 变化。
+- 检查接口只发现规范 BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库、成功检查 job ID 与选定轨道描述，后端校验检查 job 的知识库/BV/P/轨道后再次解析 BV/P→CID，客户端不得提交 CID 或标题。
 - 单轨检查后自动准备字幕；多轨必须由用户明确选择并点击“加载字幕”。指南只接受已保存的 Transcript `revision_id` 与预期 BV/P，来源不匹配稳定失败且不得调用 Provider。
-- workspace 同时返回该 BV/P 最近保存的 Transcript revision；已有指南默认显示其绑定 revision，新检查得到的 revision 只作为待生成版本，不覆盖旧指南。
+- workspace 同时返回该 BV/P 最近保存的 Transcript revision，并明确区分空、仅 Transcript 和已有指南；仅 Transcript 不得被误报为“已有学习内容”或阻止首次生成。已有指南保持绑定 revision，新明确加载的 revision 成为字幕页默认版本，并可切回指南绑定字幕，旧指南不被覆盖。
 - 独立字幕页完整显示时间戳和 cue 文本；间隙无高亮，重叠时使用最后开始的 cue。默认跟随播放位置，手动滚动暂停，明确恢复后继续；点击 cue 只跳转起点，不暂停视频。
-- 长字幕使用浏览器原生延迟渲染优化，但保留完整列表语义、键盘操作和可访问名称。旧 revision 缺少分集标题时只显示 `P序号（历史记录）`，不得暗示已重新验证。
+- 长字幕使用浏览器原生延迟渲染优化，但保留完整列表语义、键盘操作和可访问名称。旧 revision 缺少来源证明时标记 `legacy_unverified` 并显示警告；只有 BV/P/CID/内容哈希完全一致时才能原位升级验证来源，不删除、不重绑或改写历史内容。
 - 检查、字幕准备、workspace 与生成结果均绑定启动时的 `tabId + library + BV/P` owner；所有任务结果携带 BV/P/revision，应用前再次核对，迟到结果只能写回原作用域。
 - 创建或重新生成前必须显示 P、分集标题、轨道、revision 和 Provider 的确认面板；确认前不得调用模型。取消、失败和重新生成期间继续显示旧指南，只有来源匹配的新指南成功后才切换。
 
@@ -107,6 +109,7 @@ POST /api/v1/cache/clear
 - job 状态扩展为 `queued|running|cancel_requested|cancelled|succeeded|failed|interrupted`。
 - SQLite schema 升级到 v4，规范化保存 BV/P 来源键、指南生成元数据、测验尝试、总结、导图、usage、重试关系和取消状态；旧 v3 数据前向迁移并保留备份。
 - `bili-study config provider set` 新增可选 `--input-price-per-million`、`--output-price-per-million` 和 `--currency`；旧配置继续可读。
+- `VideoContext` 携带 `identity_state`、`identity_evidence` 及可选集合序号；Transcript 携带 `source_verification` 与 `page_identity_source`。来源冲突稳定返回 `video_identity_ambiguous`、`page_identity_unresolved` 或 `inspection_source_mismatch`。
 
 ## 明确不在范围内
 
@@ -131,3 +134,4 @@ POST /api/v1/cache/clear
 | P10-003 | 阻断 | 证据反馈缺少明确输出 schema，修复后仍可能格式无效 | 已补齐反馈 schema、问题证据边界校验和失败作答持久化；待真实复验 |
 | P10-004 | 阻断 | 默认全局 side panel 导致未点击标签页和非 Bilibili 页面仍显示侧栏 | 已改为仅受支持视频标签页启用的 tab-specific panel；自动化通过，Chrome/Edge 真实复验待执行 |
 | P10-005 | 阻断 | 长任务缺少停止与显式重试，服务重启可能重复发送计费请求 | 已实现取消状态机、重启中断与 `retry_of`；自动化已覆盖核心状态，真实在途 Provider/重启复验待执行 |
+| P10-006 | 阻断 | 只有 Transcript、从未生成指南的 workspace 被误判为已有学习内容，首次创建被短路 | 已区分 Transcript-only 与 guide-ready；创建仅在确有 guide 时复用，自动化通过，待真实复验 |

@@ -13,9 +13,17 @@ export type TranscriptResponse = {
     kind: string;
     language: string;
     page: number;
+    page_identity_source: string;
     revision_id: string;
     schema_version: number;
+    source_verification: TranscriptResponse.source_verification;
     title: string;
     track_id: (string | null);
 };
+export namespace TranscriptResponse {
+    export enum source_verification {
+        VERIFIED = 'verified',
+        LEGACY_UNVERIFIED = 'legacy_unverified',
+    }
+}
 

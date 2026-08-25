@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bili_study.domain import (
     DomainError,
     EvidenceRef,
+    InspectionSourceMismatch,
     SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
     TranscriptRevision,
@@ -55,7 +56,7 @@ from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, creat
 from bili_subtitle.infrastructure.credentials import KeyringCredentialStore
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 
-API_VERSION = "1.2.0"
+API_VERSION = "1.3.0"
 MAX_REQUEST_BYTES = 1_048_576
 RATE_LIMIT_PER_MINUTE = 120
 
@@ -77,10 +78,15 @@ class VideoInspectRequest(StrictModel):
     library: str = Field(min_length=1, max_length=100)
     bvid: str = Field(pattern=r"^BV[A-Za-z0-9]{10}$")
     page: int = Field(ge=1, le=10_000)
+    identity_state: Literal["resolved"] = "resolved"
+    identity_evidence: Literal["url_page", "video_pod_item", "single_video"] = "single_video"
+    collection_index: int | None = Field(default=None, ge=1, le=100_000)
+    collection_total: int | None = Field(default=None, ge=1, le=100_000)
 
 
 class TranscriptPrepareRequest(StrictModel):
     library: str = Field(min_length=1, max_length=100)
+    inspect_job_id: str = Field(min_length=1, max_length=100)
     track_id: str = Field(pattern=r"^[1-9][0-9]*$", max_length=32)
     track_language: str = Field(min_length=1, max_length=64)
     track_display_name: str = Field(min_length=1, max_length=200)
@@ -172,6 +178,8 @@ class TranscriptResponse(StrictModel):
     kind: str
     content_sha256: str
     created_at: str
+    source_verification: Literal["verified", "legacy_unverified"]
+    page_identity_source: str
     cues: list[TranscriptCueResponse]
 
 
@@ -345,6 +353,8 @@ def _download_transcript(raw: dict[str, Any]):
             metadata=BilibiliMetadataAdapter(client),
         )
         page = selection.pages[0]
+        if raw.get("inspected_cid") is None or int(raw["inspected_cid"]) != page.cid:
+            raise InspectionSourceMismatch("重新解析的视频分集与字幕检查结果不一致。")
         adapter = BilibiliSubtitleAdapter(client)
         tracks = adapter.discover(bvid=selection.video.bvid, cid=page.cid)
         selected = _select_subtitle_track(tracks, raw)
@@ -380,6 +390,10 @@ def _transcript_response(transcript: TranscriptRevision) -> TranscriptResponse:
         kind=transcript.kind,
         content_sha256=transcript.content_sha256,
         created_at=transcript.created_at,
+        source_verification=cast(
+            Literal["verified", "legacy_unverified"], transcript.source_verification
+        ),
+        page_identity_source=transcript.page_identity_source,
         cues=[TranscriptCueResponse.model_validate(asdict(cue)) for cue in transcript.cues],
     )
 
@@ -901,9 +915,46 @@ def create_app(
     )
     def _prepare_transcript(
         bvid: str, page: int, body: TranscriptPrepareRequest, _: Auth
-    ) -> JobAccepted:
+    ) -> JobAccepted | JSONResponse:
         LibraryRegistry(app_paths).get(body.library)
-        request = {**body.model_dump(), "bvid": bvid, "page": page}
+        try:
+            inspected = job_repository.job(body.inspect_job_id)
+        except StorageError:
+            return _error(409, "inspection_source_mismatch", "字幕检查任务不存在或已失效。")
+        result_value = inspected.get("result")
+        original_value = inspected.get("request")
+        if (
+            inspected.get("kind") != "video_inspect"
+            or inspected.get("status") != "succeeded"
+            or not isinstance(result_value, dict)
+            or not isinstance(original_value, dict)
+        ):
+            return _error(409, "inspection_source_mismatch", "字幕检查结果与当前视频来源不匹配。")
+        result = cast(dict[str, Any], result_value)
+        original = cast(dict[str, Any], original_value)
+        if (
+            result.get("bvid") != bvid
+            or result.get("page") != page
+            or original.get("library") != body.library
+            or original.get("bvid") != bvid
+            or original.get("page") != page
+        ):
+            return _error(409, "inspection_source_mismatch", "字幕检查结果与当前视频来源不匹配。")
+        tracks = result.get("tracks")
+        descriptor = {
+            "track_id": body.track_id,
+            "language": body.track_language,
+            "display_name": body.track_display_name,
+            "kind": body.track_kind,
+        }
+        if not isinstance(tracks, list) or descriptor not in tracks:
+            return _error(409, "inspection_source_mismatch", "字幕轨道不属于该次检查结果。")
+        request = {
+            **body.model_dump(),
+            "bvid": bvid,
+            "page": page,
+            "inspected_cid": result.get("cid"),
+        }
         return JobAccepted(job_id=app_worker.submit("transcript", request))
 
     @app.post(

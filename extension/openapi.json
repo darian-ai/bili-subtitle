@@ -525,6 +525,12 @@
       "TranscriptPrepareRequest": {
         "additionalProperties": false,
         "properties": {
+          "inspect_job_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Inspect Job Id",
+            "type": "string"
+          },
           "library": {
             "maxLength": 100,
             "minLength": 1,
@@ -560,6 +566,7 @@
         },
         "required": [
           "library",
+          "inspect_job_id",
           "track_id",
           "track_language",
           "track_display_name",
@@ -610,6 +617,10 @@
             "title": "Page",
             "type": "integer"
           },
+          "page_identity_source": {
+            "title": "Page Identity Source",
+            "type": "string"
+          },
           "revision_id": {
             "title": "Revision Id",
             "type": "string"
@@ -617,6 +628,14 @@
           "schema_version": {
             "title": "Schema Version",
             "type": "integer"
+          },
+          "source_verification": {
+            "enum": [
+              "verified",
+              "legacy_unverified"
+            ],
+            "title": "Source Verification",
+            "type": "string"
           },
           "title": {
             "title": "Title",
@@ -647,6 +666,8 @@
           "kind",
           "content_sha256",
           "created_at",
+          "source_verification",
+          "page_identity_source",
           "cues"
         ],
         "title": "TranscriptResponse",
@@ -698,6 +719,48 @@
           "bvid": {
             "pattern": "^BV[A-Za-z0-9]{10}$",
             "title": "Bvid",
+            "type": "string"
+          },
+          "collection_index": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Index"
+          },
+          "collection_total": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Total"
+          },
+          "identity_evidence": {
+            "default": "single_video",
+            "enum": [
+              "url_page",
+              "video_pod_item",
+              "single_video"
+            ],
+            "title": "Identity Evidence",
+            "type": "string"
+          },
+          "identity_state": {
+            "const": "resolved",
+            "default": "resolved",
+            "title": "Identity State",
             "type": "string"
           },
           "library": {
@@ -780,7 +843,7 @@
   },
   "info": {
     "title": "bili-study Local API",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "openapi": "3.1.0",
   "paths": {

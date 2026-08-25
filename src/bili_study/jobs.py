@@ -9,6 +9,7 @@ from typing import Any
 
 from bili_study.domain import (
     DomainError,
+    InspectionSourceMismatch,
     SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
     TranscriptSourceMismatch,
@@ -50,6 +51,8 @@ def stable_error_code(exc: BaseException) -> str:
         return "subtitle_track_unavailable"
     if isinstance(exc, TranscriptSourceMismatch):
         return "transcript_source_mismatch"
+    if isinstance(exc, InspectionSourceMismatch):
+        return "inspection_source_mismatch"
     if isinstance(exc, DomainError):
         return "evidence_validation"
     if isinstance(exc, (MetadataError, SubtitleError)):

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, DefaultService, OpenAPI, type TranscriptPrepareRequest } from "../../src/api";
+import { VideoInspectRequest } from "../../src/api/models/VideoInspectRequest";
 import { localApi } from "../../src/local-api";
 import { activeChapter, activeCue, type VideoContext } from "../../src/video-context";
 
@@ -7,7 +8,7 @@ interface Library { id: string; name: string }
 interface Track { track_id: string; language: string; display_name: string; kind: "human" | "ai" }
 interface Inspection {
   source_id: string; bvid: string; page: number; cid: number; title: string;
-  subtitle_status: "available" | "no_subtitles"; tracks: Track[];
+  subtitle_status: "available" | "no_subtitles"; tracks: Track[]; inspect_job_id: string;
 }
 interface Evidence { revision_id?: string; start_cue_id: string; end_cue_id: string }
 interface Question {
@@ -33,6 +34,7 @@ interface TranscriptCue { cue_id: string; start_ms: number; end_ms: number; text
 interface Transcript {
   revision_id: string; bvid: string; page: number; title: string; track_id: string | null;
   language: string; display_name: string; kind: string; content_sha256: string;
+  source_verification: "verified" | "legacy_unverified"; page_identity_source: string;
   cues: TranscriptCue[];
 }
 interface ReflectionAttempt {
@@ -81,6 +83,7 @@ const JOB_ERRORS: Record<string, string> = {
   structure: "AI 返回格式无效，自动修复后仍未通过。请重试或更换模型。",
   subtitle_track_unavailable: "字幕轨道已变化，请重新检查字幕。",
   subtitle_track_ambiguous: "发现多个同名字幕轨道，请重新选择字幕轨道。",
+  inspection_source_mismatch: "视频选集已变化，请等待切换完成后重新检查字幕。",
   authentication: "Provider 认证失败，请检查配置和 API Key。",
   timeout: "Provider 响应超时，请稍后重试。",
   network: "Provider 网络请求失败。",
@@ -124,7 +127,8 @@ function formatTime(milliseconds: number): string {
 }
 
 function sessionKey(tabId: number, library: string, value: VideoContext): string | undefined {
-  return value.supported && value.bvid && value.page && library
+  return value.supported && value.identity_state !== "transitioning"
+    && value.identity_state !== "ambiguous" && value.bvid && value.page && library
     ? JSON.stringify([tabId, library, value.bvid, value.page])
     : undefined;
 }
@@ -157,6 +161,7 @@ export function App({ tabId }: { tabId: number }) {
   const [retryJobId, setRetryJobId] = useState<string>();
   const [confirmation, setConfirmation] = useState<{ revision: Transcript; regenerate: boolean }>();
   const [followTranscript, setFollowTranscript] = useState(true);
+  const [showGuideTranscript, setShowGuideTranscript] = useState(false);
   const [jobProgress, setJobProgress] = useState<{
     value: JobProgress | undefined; elapsed: number;
   }>();
@@ -200,6 +205,7 @@ export function App({ tabId }: { tabId: number }) {
     setTranscript(saved?.transcript); setPreparedTranscript(saved?.preparedTranscript);
     setActiveJobId(saved?.activeJobId); setRetryJobId(saved?.retryJobId);
     setConfirmation(undefined); setFollowTranscript(true);
+    setShowGuideTranscript(false);
     setView(saved?.view ?? { kind: "outline" });
     setPracticeChapterId(saved?.practiceChapterId ?? ""); setNote(saved?.note ?? "");
     setResponses(saved?.responses ?? {}); setFeedbacks(saved?.feedbacks ?? {});
@@ -339,6 +345,9 @@ export function App({ tabId }: { tabId: number }) {
     const savedTranscript = await localApi(DefaultService.getTranscript({
       revisionId: lookup.revision_id!, library: libraryName,
     })) as Transcript;
+    if (savedTranscript.bvid !== bvid || savedTranscript.page !== page) {
+      throw new Error("workspace Transcript 不属于请求 BV/P。");
+    }
     return { notes: [], reflections: [], transcript: savedTranscript };
   };
 
@@ -367,8 +376,10 @@ export function App({ tabId }: { tabId: number }) {
       }
     }
     const nextStatus: WorkspaceStatus = workspace ? "ready" : "empty";
-    const nextMessage = workspace
+    const nextMessage = workspace?.guide
       ? "已加载该视频上次保存的学习内容。"
+      : workspace?.transcript
+        ? "已加载本地字幕；该视频尚未创建学习大纲。"
       : "当前知识库中没有该视频的学习记录。";
     if (activeVideoKey.current === ownerKey) {
       setGuide(workspace?.guide); setTranscript(workspace?.transcript);
@@ -438,7 +449,8 @@ export function App({ tabId }: { tabId: number }) {
     const accepted = await localApi(DefaultService.prepareTranscript({
       bvid: checked.bvid, page: checked.page,
       requestBody: {
-        library: ownerLibrary, track_id: track.track_id, track_language: track.language,
+        library: ownerLibrary, inspect_job_id: checked.inspect_job_id,
+        track_id: track.track_id, track_language: track.language,
         track_display_name: track.display_name,
         track_kind: track.kind as TranscriptPrepareRequest.track_kind,
       },
@@ -455,7 +467,8 @@ export function App({ tabId }: { tabId: number }) {
       throw new Error("字幕 revision 与当前分集不匹配。");
     }
     if (activeVideoKey.current === ownerKey) {
-      setPreparedTranscript(loaded); setStatus("字幕已加载，可在字幕页查看。");
+      setPreparedTranscript(loaded); setShowGuideTranscript(false);
+      setStatus("字幕已加载，可在字幕页查看。");
     } else {
       const saved = sessions.current.get(ownerKey) ?? snapshot.current;
       sessions.current.set(ownerKey, {
@@ -468,15 +481,23 @@ export function App({ tabId }: { tabId: number }) {
   const inspect = async () => {
     const ownerKey = activeVideoKey.current;
     const expectedBvid = video.bvid; const expectedPage = video.page;
-    if (!expectedBvid || !expectedPage || !library || !ownerKey) return;
+    if (!expectedBvid || !expectedPage || !library || !ownerKey
+      || video.identity_state === "transitioning" || video.identity_state === "ambiguous") return;
     setPending("inspect"); setJobProgress(undefined); setStatus("正在检查视频与字幕轨道…");
     try {
       const accepted = await localApi(DefaultService.inspectVideo({ requestBody: {
         library, bvid: expectedBvid, page: expectedPage,
+        identity_state: "resolved", identity_evidence: (video.identity_evidence === "url_page"
+          ? VideoInspectRequest.identity_evidence.URL_PAGE
+          : video.identity_evidence === "video_pod_item"
+            ? VideoInspectRequest.identity_evidence.VIDEO_POD_ITEM
+            : VideoInspectRequest.identity_evidence.SINGLE_VIDEO),
+        ...(video.collection_index === undefined ? {} : { collection_index: video.collection_index }),
+        ...(video.collection_total === undefined ? {} : { collection_total: video.collection_total }),
       } }));
       const job = await trackJob(accepted.job_id, ownerKey);
       if (job.status !== "succeeded") throw jobError(job, "检查失败");
-      const result = job.result as unknown as Inspection;
+      const result = { ...(job.result as unknown as Inspection), inspect_job_id: accepted.job_id };
       if (result.bvid !== expectedBvid || result.page !== expectedPage) {
         throw new Error("检查任务返回了不属于启动分集的结果。");
       }
@@ -504,7 +525,7 @@ export function App({ tabId }: { tabId: number }) {
       if (guide) { setView({ kind: "outline" }); setStatus("已显示保存的学习大纲。"); return; }
       try {
         const existing = await loadWorkspace(operationKey, video.bvid, video.page, library);
-        if (existing) { setView({ kind: "outline" }); return; }
+        if (existing?.guide) { setView({ kind: "outline" }); return; }
       } catch { return; }
     }
     const selectedRevision = confirmed ? confirmation?.revision : (preparedTranscript ?? transcript);
@@ -652,7 +673,7 @@ export function App({ tabId }: { tabId: number }) {
     () => guide ? activeChapter(guide.chapters, video.currentTimeMs) : undefined,
     [guide, video.currentTimeMs],
   );
-  const displayedTranscript = guide ? transcript : (preparedTranscript ?? transcript);
+  const displayedTranscript = showGuideTranscript ? transcript : (preparedTranscript ?? transcript);
   const currentCue = useMemo(
     () => activeCue(displayedTranscript?.cues ?? [], video.currentTimeMs),
     [displayedTranscript, video.currentTimeMs],
@@ -704,10 +725,14 @@ export function App({ tabId }: { tabId: number }) {
     {connected && view.kind === "outline" && <>
       <section className={!video.supported ? "muted" : ""}><h2>当前视频</h2>
         {!video.supported ? <p>请打开受支持的普通 Bilibili 视频页。</p> : <>
-          <p><code>{video.bvid}</code> · P{video.page} · {formatTime(video.currentTimeMs)}</p>
+          {video.identity_state === "transitioning" || video.identity_state === "ambiguous"
+            ? <p>播放器正在切换选集，来源尚未稳定，请稍候。</p>
+            : <p><code>{video.bvid}</code> · {video.identity_evidence === "video_pod_item"
+              ? `选集第 ${video.collection_index ?? "?"} 项${video.collection_total ? ` / ${video.collection_total}` : ""}`
+              : `P${video.page}`} · {formatTime(video.currentTimeMs)}</p>}
           <label>知识库<select value={library} onChange={(event) => setLibrary(event.target.value)}>{libraries.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
           <label>Provider<input value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="已配置的名称" /></label>
-          <button disabled={Boolean(pending) || !library} onClick={inspect}>检查字幕</button>
+          <button disabled={Boolean(pending) || !library || !activeScope} onClick={inspect}>检查字幕</button>
         </>}
       </section>
       {inspection && <section><h2>字幕轨道</h2>{inspection.tracks.length === 0 ? <p>当前分集没有可见字幕。</p> : <>
@@ -754,7 +779,12 @@ export function App({ tabId }: { tabId: number }) {
       {!followTranscript && <button className="quiet compact" onClick={() => setFollowTranscript(true)}>回到当前字幕</button>}
     </div>
       {!displayedTranscript ? <p>请先加载字幕。</p> : <>
+        {guide && preparedTranscript && preparedTranscript.revision_id !== transcript?.revision_id && <div className="row" aria-label="字幕版本">
+          <button className={!showGuideTranscript ? "compact" : "quiet compact"} onClick={() => setShowGuideTranscript(false)}>新加载字幕</button>
+          <button className={showGuideTranscript ? "compact" : "quiet compact"} onClick={() => setShowGuideTranscript(true)}>指南绑定字幕</button>
+        </div>}
         <p className="muted-text">P{displayedTranscript.page} · {displayedTranscript.title} · {displayedTranscript.display_name} · revision <code>{displayedTranscript.revision_id}</code></p>
+        {displayedTranscript.source_verification === "legacy_unverified" && <p className="warning">历史字幕来源尚未重新验证。</p>}
         <ol ref={transcriptList} className="transcript-list" aria-label="完整字幕时间轴" onScroll={() => {
           if (!automaticScroll.current) setFollowTranscript(false);
         }}>{displayedTranscript.cues.map((cue) => <li key={cue.cue_id} data-cue-id={cue.cue_id} className={cue.cue_id === currentCue?.cue_id ? "current" : ""}>

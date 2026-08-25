@@ -28,6 +28,10 @@ class TranscriptSourceMismatch(DomainError):
     """A saved revision does not belong to the caller's expected canonical BV/P."""
 
 
+class InspectionSourceMismatch(DomainError):
+    """A fresh canonical resolution no longer matches the bound inspection."""
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptCue:
     cue_id: str
@@ -57,6 +61,8 @@ class TranscriptRevision:
     content_sha256: str
     created_at: str
     cues: tuple[TranscriptCue, ...]
+    source_verification: str = "verified"
+    page_identity_source: str = "server_resolved_bvid_page"
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION or not self.revision_id:
@@ -65,6 +71,8 @@ class TranscriptRevision:
             raise DomainError("Transcript 来源无效。")
         if not self.cues:
             raise DomainError("Transcript 不能为空。")
+        if self.source_verification not in {"verified", "legacy_unverified"}:
+            raise DomainError("Transcript 来源验证状态无效。")
         for index, cue in enumerate(self.cues):
             if cue.cue_id != f"c{index + 1:06d}":
                 raise DomainError("字幕 cue 标识必须稳定且连续。")
@@ -202,6 +210,8 @@ def build_transcript(
     kind: str,
     cue_values: tuple[tuple[int, int, str], ...],
     created_at: str | None = None,
+    source_verification: str = "verified",
+    page_identity_source: str = "server_resolved_bvid_page",
 ) -> TranscriptRevision:
     cues = tuple(
         TranscriptCue(f"c{index + 1:06d}", start, end, text)
@@ -223,6 +233,8 @@ def build_transcript(
         digest,
         created_at or now_iso(),
         cues,
+        source_verification,
+        page_identity_source,
     )
 
 
@@ -276,4 +288,6 @@ def transcript_from_dict(raw: dict[str, Any]) -> TranscriptRevision:
         content_sha256=str(raw["content_sha256"]),
         created_at=str(raw["created_at"]),
         cues=tuple(TranscriptCue(**cue) for cue in raw["cues"]),
+        source_verification=str(raw.get("source_verification") or "legacy_unverified"),
+        page_identity_source=str(raw.get("page_identity_source") or "legacy_record"),
     )
