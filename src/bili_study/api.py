@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from bili_study.domain import (
     DomainError,
@@ -23,6 +23,7 @@ from bili_study.domain import (
     SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
     TranscriptRevision,
+    TranscriptSourceMismatch,
     build_transcript,
     new_note,
 )
@@ -54,7 +55,7 @@ from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, creat
 from bili_subtitle.infrastructure.credentials import KeyringCredentialStore
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 
-API_VERSION = "1.1.0"
+API_VERSION = "1.2.0"
 MAX_REQUEST_BYTES = 1_048_576
 RATE_LIMIT_PER_MINUTE = 120
 
@@ -78,29 +79,21 @@ class VideoInspectRequest(StrictModel):
     page: int = Field(ge=1, le=10_000)
 
 
+class TranscriptPrepareRequest(StrictModel):
+    library: str = Field(min_length=1, max_length=100)
+    track_id: str = Field(pattern=r"^[1-9][0-9]*$", max_length=32)
+    track_language: str = Field(min_length=1, max_length=64)
+    track_display_name: str = Field(min_length=1, max_length=200)
+    track_kind: Literal["human", "ai"]
+
+
 class SourceRequest(StrictModel):
     library: str = Field(min_length=1, max_length=100)
     provider: str = Field(min_length=1, max_length=100)
-    bvid: str = Field(pattern=r"^BV[A-Za-z0-9]{10}$")
-    page: int = Field(ge=1, le=10_000)
-    cid: int = Field(gt=0)
-    title: str = Field(min_length=1, max_length=500)
-    # Bilibili track IDs can exceed JavaScript's MAX_SAFE_INTEGER. Keep them as
-    # decimal strings at the HTTP boundary and convert only inside Python.
-    track_id: str = Field(pattern=r"^[1-9][0-9]*$", max_length=32)
-    track_language: str | None = Field(default=None, min_length=1, max_length=64)
-    track_display_name: str | None = Field(default=None, min_length=1, max_length=200)
-    track_kind: Literal["human", "ai"] | None = None
+    revision_id: str = Field(min_length=1, max_length=100)
+    expected_bvid: str = Field(pattern=r"^BV[A-Za-z0-9]{10}$")
+    expected_page: int = Field(ge=1, le=10_000)
     regenerate: bool = False
-
-    @model_validator(mode="after")
-    def require_complete_track_descriptor(self) -> SourceRequest:
-        descriptors = (self.track_language, self.track_display_name, self.track_kind)
-        if any(value is not None for value in descriptors) and not all(
-            value is not None for value in descriptors
-        ):
-            raise ValueError("字幕轨道稳定描述必须完整提供。")
-        return self
 
 
 class ChapterDetailRequest(StrictModel):
@@ -142,12 +135,78 @@ class JobProgressResponse(StrictModel):
 class JobResponse(StrictModel):
     job_id: str
     kind: str
-    status: Literal["queued", "running", "succeeded", "failed", "interrupted"]
+    status: Literal[
+        "queued",
+        "running",
+        "cancel_requested",
+        "cancelled",
+        "succeeded",
+        "failed",
+        "interrupted",
+    ]
     result: dict[str, Any] | None = None
     error_code: str | None = None
     progress: JobProgressResponse | None = None
     created_at: str
     updated_at: str
+    retry_of: str | None = None
+
+
+class TranscriptCueResponse(StrictModel):
+    cue_id: str
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+class TranscriptResponse(StrictModel):
+    revision_id: str
+    schema_version: int
+    bvid: str
+    page: int
+    cid: int
+    title: str
+    track_id: str | None
+    language: str
+    display_name: str
+    kind: str
+    content_sha256: str
+    created_at: str
+    cues: list[TranscriptCueResponse]
+
+
+class VideoWorkspaceLookup(StrictModel):
+    schema_version: Literal[1] = 1
+    bvid: str
+    page: int
+    guide_id: str | None
+    revision_id: str | None
+
+
+class PersonalNoteResponse(StrictModel):
+    note_id: str
+    revision_id: str
+    timestamp_ms: int
+    note_type: str
+    body: str
+    created_at: str
+    updated_at: str
+
+
+class ReflectionAttemptResponse(StrictModel):
+    reflection_id: str
+    guide_id: str
+    question_id: str
+    response: str
+    status: Literal["pending", "succeeded", "feedback_failed"]
+    feedback: dict[str, Any] | None = None
+
+
+class StudyWorkspaceResponse(StrictModel):
+    schema_version: Literal[1] = 1
+    guide: dict[str, Any]
+    notes: list[PersonalNoteResponse]
+    reflections: list[ReflectionAttemptResponse]
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -276,29 +335,70 @@ def _select_subtitle_track(tracks: tuple[Any, ...], raw: dict[str, Any]):
 
 
 def _download_transcript(raw: dict[str, Any]):
+    """Resolve canonical BV/P server-side before touching a selected subtitle track."""
     client, _ = _platform_client()
     with client:
-        adapter = BilibiliSubtitleAdapter(client)
-        tracks = adapter.discover(bvid=str(raw["bvid"]), cid=int(raw["cid"]))
-        selected = _select_subtitle_track(tracks, raw)
-        body = adapter.download_selected(
-            bvid=str(raw["bvid"]), cid=int(raw["cid"]), selected=selected
+        selection = resolve_selection(
+            str(raw["bvid"]),
+            page=int(raw["page"]),
+            all_pages=False,
+            metadata=BilibiliMetadataAdapter(client),
         )
+        page = selection.pages[0]
+        adapter = BilibiliSubtitleAdapter(client)
+        tracks = adapter.discover(bvid=selection.video.bvid, cid=page.cid)
+        selected = _select_subtitle_track(tracks, raw)
+        body = adapter.download_selected(bvid=selection.video.bvid, cid=page.cid, selected=selected)
     cue_values = tuple(
         (int(cue.start * 1000), max(int(cue.end * 1000), int(cue.start * 1000) + 1), cue.text)
         for cue in body.cues
     )
     return build_transcript(
-        bvid=str(raw["bvid"]),
-        page=int(raw["page"]),
-        cid=int(raw["cid"]),
-        title=str(raw["title"]),
+        bvid=selection.video.bvid,
+        page=page.number,
+        cid=page.cid,
+        title=page.title or selection.video.title,
         track_id=selected.track_id,
         language=selected.language,
         display_name=selected.display_name,
         kind=selected.kind.value,
         cue_values=cue_values,
     )
+
+
+def _transcript_response(transcript: TranscriptRevision) -> TranscriptResponse:
+    return TranscriptResponse(
+        revision_id=transcript.revision_id,
+        schema_version=transcript.schema_version,
+        bvid=transcript.bvid,
+        page=transcript.page,
+        cid=transcript.cid,
+        title=transcript.title or f"P{transcript.page}（历史记录）",
+        track_id=str(transcript.track_id) if transcript.track_id is not None else None,
+        language=transcript.language,
+        display_name=transcript.display_name,
+        kind=transcript.kind,
+        content_sha256=transcript.content_sha256,
+        created_at=transcript.created_at,
+        cues=[TranscriptCueResponse.model_validate(asdict(cue)) for cue in transcript.cues],
+    )
+
+
+def _transcript_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
+    _library_value, repository = _library(paths, str(raw["library"]))
+    progress("fetching_transcript", 10)
+    transcript = _download_transcript(raw)
+    progress("validating_transcript", 85)
+    repository.save_transcript(transcript)
+    return {
+        "bvid": transcript.bvid,
+        "page": transcript.page,
+        "revision_id": transcript.revision_id,
+    }
 
 
 def _with_evidence_times(value: object, transcript: TranscriptRevision) -> object:
@@ -320,15 +420,105 @@ def _with_evidence_times(value: object, transcript: TranscriptRevision) -> objec
     return result
 
 
+def _guide_view(repository: StudyRepository, guide_id: str) -> dict[str, Any]:
+    payload = repository.guide_payload(guide_id)
+    transcript = repository.get_transcript(str(payload["revision_id"]))
+    guide = guide_from_payload(
+        payload, transcript, str(payload["fingerprint"]), str(payload["output_language"])
+    )
+    result: dict[str, Any] = asdict(guide)
+    for chapter, domain_chapter in zip(result["chapters"], guide.chapters, strict=True):
+        start, end = domain_chapter.evidence.time_range(transcript)
+        chapter["start_ms"] = start
+        chapter["end_ms"] = end
+        for question, domain_question in zip(
+            chapter["questions"], domain_chapter.questions, strict=True
+        ):
+            qstart, qend = domain_question.evidence.time_range(transcript)
+            question["start_ms"] = qstart
+            question["end_ms"] = qend
+    result["details"] = _with_evidence_times(repository.chapter_details(guide_id), transcript)
+    practices = repository.chapter_practices(guide_id)
+    for chapter in guide.chapters:
+        practice = practices.get(chapter.chapter_id)
+        if practice is None:
+            continue
+        for question, domain_question in zip(
+            practice.get("questions", []),
+            practice_questions(practice, transcript, chapter),
+            strict=True,
+        ):
+            start, end = domain_question.evidence.time_range(transcript)
+            question["start_ms"] = start
+            question["end_ms"] = end
+    result["practices"] = practices
+    return result
+
+
+def _study_workspace(repository: StudyRepository, guide_id: str) -> StudyWorkspaceResponse:
+    guide = _guide_view(repository, guide_id)
+    revision_id = str(guide["revision_id"])
+    question_ids = {
+        str(question["question_id"])
+        for chapter in cast(list[dict[str, Any]], guide["chapters"])
+        for question in cast(list[dict[str, Any]], chapter.get("questions", []))
+    }
+    for practice in cast(dict[str, dict[str, Any]], guide["practices"]).values():
+        question_ids.update(
+            str(question["question_id"])
+            for question in cast(list[dict[str, Any]], practice.get("questions", []))
+        )
+    reflections: list[ReflectionAttemptResponse] = []
+    for attempt in repository.reflections(revision_id):
+        attempt_guide_id = attempt.get("guide_id")
+        question_id = str(attempt.get("question_id", ""))
+        if attempt_guide_id not in {None, guide_id} or question_id not in question_ids:
+            continue
+        status_value = str(attempt.get("status", "feedback_failed"))
+        if status_value not in {"pending", "succeeded", "feedback_failed"}:
+            status_value = "feedback_failed"
+        reflections.append(
+            ReflectionAttemptResponse(
+                reflection_id=str(attempt["reflection_id"]),
+                guide_id=guide_id,
+                question_id=question_id,
+                response=str(attempt.get("response", "")),
+                status=cast(Literal["pending", "succeeded", "feedback_failed"], status_value),
+                feedback=cast(dict[str, Any] | None, attempt.get("feedback")),
+            )
+        )
+    return StudyWorkspaceResponse(
+        guide=guide,
+        notes=[
+            PersonalNoteResponse.model_validate(asdict(note))
+            for note in repository.notes(revision_id)
+        ],
+        reflections=reflections,
+    )
+
+
 def _guide_job(
     paths: AppPaths,
     raw: dict[str, Any],
     progress: ProgressCallback = _no_progress,
 ) -> dict[str, Any]:
     library, repository = _library(paths, str(raw["library"]))
-    progress("fetching_transcript", 10)
-    transcript = _download_transcript(raw)
-    repository.save_transcript(transcript)
+    transcript = repository.get_transcript(str(raw["revision_id"]))
+    if transcript.bvid != str(raw["expected_bvid"]) or transcript.page != int(raw["expected_page"]):
+        raise TranscriptSourceMismatch("Transcript revision 与预期 BV/P 不匹配。")
+    if not bool(raw.get("regenerate", False)):
+        existing = repository.latest_guide_for_revision(transcript.revision_id)
+        if existing is not None:
+            progress("cache_hit", 90)
+            return {
+                "guide_id": str(existing["guide_id"]),
+                "source_id": str(existing["revision_id"]),
+                "revision_id": transcript.revision_id,
+                "bvid": transcript.bvid,
+                "page": transcript.page,
+                "cache_hit": True,
+                "reused_existing": True,
+            }
     progress("preparing_outline", 20)
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
@@ -345,6 +535,9 @@ def _guide_job(
     return {
         "guide_id": result.guide.guide_id,
         "source_id": transcript.revision_id,
+        "revision_id": transcript.revision_id,
+        "bvid": transcript.bvid,
+        "page": transcript.page,
         "cache_hit": result.metrics.cache_hit,
     }
 
@@ -365,6 +558,18 @@ def _detail_job(
         chapter = next(c for c in guide.chapters if c.chapter_id == str(raw["chapter_id"]))
     except StopIteration as exc:
         raise DomainError("章节不存在。") from exc
+    existing = repository.chapter_details(guide.guide_id).get(chapter.chapter_id)
+    if existing is not None:
+        progress("cache_hit", 90)
+        return {
+            "guide_id": guide.guide_id,
+            "chapter_id": chapter.chapter_id,
+            "revision_id": transcript.revision_id,
+            "bvid": transcript.bvid,
+            "page": transcript.page,
+            "detail": existing,
+            "reused_existing": True,
+        }
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     progress("generating_detail", 35)
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
@@ -372,9 +577,17 @@ def _detail_job(
             transcript, chapter, progress=progress
         )
     progress("validating_evidence", 80)
+    progress("persisting", 85)
     repository.save_chapter_detail(guide.guide_id, chapter.chapter_id, detail)
     progress("publishing", 90)
-    return {"guide_id": guide.guide_id, "chapter_id": chapter.chapter_id, "detail": detail}
+    return {
+        "guide_id": guide.guide_id,
+        "chapter_id": chapter.chapter_id,
+        "detail": detail,
+        "revision_id": transcript.revision_id,
+        "bvid": transcript.bvid,
+        "page": transcript.page,
+    }
 
 
 def _practice_job(
@@ -393,6 +606,17 @@ def _practice_job(
         chapter = next(c for c in guide.chapters if c.chapter_id == str(raw["chapter_id"]))
     except StopIteration as exc:
         raise DomainError("章节不存在。") from exc
+    existing = repository.chapter_practices(guide.guide_id).get(chapter.chapter_id)
+    if existing is not None:
+        progress("cache_hit", 90)
+        return {
+            "guide_id": guide.guide_id,
+            "chapter_id": chapter.chapter_id,
+            "revision_id": transcript.revision_id,
+            "bvid": transcript.bvid,
+            "page": transcript.page,
+            "reused_existing": True,
+        }
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     progress("generating_practice", 35)
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
@@ -400,9 +624,16 @@ def _practice_job(
             transcript, chapter, progress=progress
         )
     progress("validating_evidence", 80)
+    progress("persisting", 85)
     repository.save_chapter_practice(guide.guide_id, chapter.chapter_id, practice)
     progress("publishing", 90)
-    return {"guide_id": guide.guide_id, "chapter_id": chapter.chapter_id}
+    return {
+        "guide_id": guide.guide_id,
+        "chapter_id": chapter.chapter_id,
+        "revision_id": transcript.revision_id,
+        "bvid": transcript.bvid,
+        "page": transcript.page,
+    }
 
 
 def _reflection_job(
@@ -426,19 +657,38 @@ def _reflection_job(
         question = next(q for q in questions if q.question_id == str(raw["question_id"]))
     except StopIteration as exc:
         raise DomainError("引导问题不存在。") from exc
+    response = str(raw["response"])
+    for existing in reversed(repository.reflections(transcript.revision_id)):
+        if (
+            existing.get("guide_id") == guide.guide_id
+            and existing.get("question_id") == question.question_id
+            and existing.get("response") == response
+            and existing.get("status") == "succeeded"
+        ):
+            progress("cache_hit", 90)
+            return {
+                "reflection_id": str(existing["reflection_id"]),
+                "guide_id": guide.guide_id,
+                "question_id": question.question_id,
+                "revision_id": transcript.revision_id,
+                "bvid": transcript.bvid,
+                "page": transcript.page,
+                "feedback": existing.get("feedback"),
+                "reused_existing": True,
+            }
     reflection_id = str(uuid4())
     publish_reflection(
         library,
         reflection_id=reflection_id,
         revision_id=transcript.revision_id,
         question_id=question.question_id,
-        response=str(raw["response"]),
+        response=response,
     )
     attempt = {
         "reflection_id": reflection_id,
         "guide_id": guide.guide_id,
         "question_id": question.question_id,
-        "response": str(raw["response"]),
+        "response": response,
         "status": "pending",
         "feedback": None,
     }
@@ -448,7 +698,7 @@ def _reflection_job(
     try:
         with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
             feedback, _ = GuideGenerator(chat, repository).generate_reflection(
-                transcript, question, str(raw["response"])
+                transcript, question, response
             )
     except Exception:
         repository.save_reflection(
@@ -458,17 +708,22 @@ def _reflection_job(
             {**attempt, "status": "feedback_failed"},
         )
         raise
+    progress("validating_evidence", 80)
+    progress("persisting", 85)
     result = {
         "reflection_id": reflection_id,
         "guide_id": guide.guide_id,
         "question_id": question.question_id,
         "feedback": feedback,
+        "revision_id": transcript.revision_id,
+        "bvid": transcript.bvid,
+        "page": transcript.page,
     }
     repository.save_reflection(
         reflection_id,
         transcript.revision_id,
         question.question_id,
-        {**result, "response": str(raw["response"]), "status": "succeeded"},
+        {**result, "response": response, "status": "succeeded"},
     )
     progress("publishing", 90)
     return result
@@ -491,6 +746,9 @@ def create_app(
     app_worker = worker or PersistentJobWorker(job_repository)
     app_worker.register(
         "video_inspect", lambda raw, progress: _inspect_job(app_paths, raw, progress)
+    )
+    app_worker.register(
+        "transcript", lambda raw, progress: _transcript_job(app_paths, raw, progress)
     )
     app_worker.register("study_guide", lambda raw, progress: _guide_job(app_paths, raw, progress))
     app_worker.register(
@@ -559,11 +817,12 @@ def create_app(
                 return _error(400, "invalid_content_length", "Content-Length 无效。")
             if too_large:
                 return _error(413, "request_too_large", "请求正文超过限制。")
+            body = b""
             if request.method in {"POST", "PUT", "PATCH"}:
                 body = await request.body()
                 if len(body) > MAX_REQUEST_BYTES:
                     return _error(413, "request_too_large", "请求正文超过限制。")
-            if request.method in {"POST", "PUT", "PATCH"}:
+            if request.method in {"POST", "PUT", "PATCH"} and body:
                 content_type = request.headers.get("content-type", "").split(";", 1)[0]
                 if content_type != "application/json":
                     return _error(415, "unsupported_media_type", "请求必须使用 application/json。")
@@ -635,6 +894,19 @@ def create_app(
         return JobAccepted(job_id=app_worker.submit("video_inspect", body.model_dump()))
 
     @app.post(
+        "/api/v1/videos/{bvid}/pages/{page}/transcripts",
+        response_model=JobAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+        operation_id="prepareTranscript",
+    )
+    def _prepare_transcript(
+        bvid: str, page: int, body: TranscriptPrepareRequest, _: Auth
+    ) -> JobAccepted:
+        LibraryRegistry(app_paths).get(body.library)
+        request = {**body.model_dump(), "bvid": bvid, "page": page}
+        return JobAccepted(job_id=app_worker.submit("transcript", request))
+
+    @app.post(
         "/api/v1/study-guides",
         response_model=JobAccepted,
         status_code=status.HTTP_202_ACCEPTED,
@@ -650,59 +922,79 @@ def create_app(
         record.pop("request", None)
         return JobResponse.model_validate(record)
 
+    @app.post(
+        "/api/v1/jobs/{job_id}/cancel",
+        response_model=JobResponse,
+        operation_id="cancelJob",
+    )
+    def _cancel_job(job_id: str, _: Auth) -> JobResponse | JSONResponse:
+        resulting = app_worker.cancel(job_id)
+        if resulting in {"succeeded", "failed", "interrupted"}:
+            return _error(409, "job_not_cancellable", "该任务已结束，无法取消。")
+        record = job_repository.job(job_id)
+        record.pop("request", None)
+        return JobResponse.model_validate(record)
+
+    @app.post(
+        "/api/v1/jobs/{job_id}/retry",
+        response_model=JobAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+        operation_id="retryJob",
+    )
+    def _retry_job(job_id: str, _: Auth) -> JobAccepted | JSONResponse:
+        new_job_id = app_worker.retry(job_id)
+        if new_job_id is None:
+            return _error(409, "job_not_retryable", "只有失败、中断或取消的任务可以重试。")
+        return JobAccepted(job_id=new_job_id)
+
+    @app.get(
+        "/api/v1/transcripts/{revision_id}",
+        response_model=TranscriptResponse,
+        operation_id="getTranscript",
+    )
+    def _get_transcript(
+        revision_id: str, library: str, authenticated_origin: Auth
+    ) -> TranscriptResponse:
+        del authenticated_origin
+        _library_value, repository = _library(app_paths, library)
+        return _transcript_response(repository.get_transcript(revision_id))
+
     @app.get("/api/v1/study-guides/{guide_id}", operation_id="getStudyGuide")
     def _get_study_guide(guide_id: str, library: str, authenticated_origin: Auth) -> dict[str, Any]:
         del authenticated_origin
         _library_value, repository = _library(app_paths, library)
-        payload = repository.guide_payload(guide_id)
-        transcript = repository.get_transcript(str(payload["revision_id"]))
-        guide = guide_from_payload(
-            payload, transcript, str(payload["fingerprint"]), str(payload["output_language"])
-        )
-        result: dict[str, Any] = asdict(guide)
-        for chapter, domain_chapter in zip(result["chapters"], guide.chapters, strict=True):
-            start, end = domain_chapter.evidence.time_range(transcript)
-            chapter["start_ms"] = start
-            chapter["end_ms"] = end
-            for question, domain_question in zip(
-                chapter["questions"], domain_chapter.questions, strict=True
-            ):
-                qstart, qend = domain_question.evidence.time_range(transcript)
-                question["start_ms"] = qstart
-                question["end_ms"] = qend
-        result["details"] = _with_evidence_times(repository.chapter_details(guide_id), transcript)
-        practices = repository.chapter_practices(guide_id)
-        for chapter in guide.chapters:
-            practice = practices.get(chapter.chapter_id)
-            if practice is None:
-                continue
-            for question, domain_question in zip(
-                practice.get("questions", []),
-                practice_questions(practice, transcript, chapter),
-                strict=True,
-            ):
-                start, end = domain_question.evidence.time_range(transcript)
-                question["start_ms"] = start
-                question["end_ms"] = end
-        result["practices"] = practices
-        return result
+        return _guide_view(repository, guide_id)
+
+    @app.get(
+        "/api/v1/study-guides/{guide_id}/workspace",
+        response_model=StudyWorkspaceResponse,
+        operation_id="getStudyGuideWorkspace",
+    )
+    def _get_study_guide_workspace(
+        guide_id: str, library: str, authenticated_origin: Auth
+    ) -> StudyWorkspaceResponse:
+        del authenticated_origin
+        _library_value, repository = _library(app_paths, library)
+        return _study_workspace(repository, guide_id)
 
     @app.get(
         "/api/v1/videos/{bvid}/pages/{page}/workspace",
+        response_model=VideoWorkspaceLookup,
         operation_id="getVideoWorkspace",
     )
     def _get_video_workspace(
         bvid: str, page: int, library: str, authenticated_origin: Auth
-    ) -> dict[str, Any]:
+    ) -> VideoWorkspaceLookup:
         del authenticated_origin
         _library_value, repository = _library(app_paths, library)
         payload = repository.latest_guide_for_video(bvid, page)
-        return {
-            "schema_version": 1,
-            "bvid": bvid,
-            "page": page,
-            "guide_id": str(payload["guide_id"]) if payload is not None else None,
-        }
+        transcript = repository.latest_transcript_for_video(bvid, page)
+        return VideoWorkspaceLookup(
+            bvid=bvid,
+            page=page,
+            guide_id=str(payload["guide_id"]) if payload is not None else None,
+            revision_id=transcript.revision_id if transcript is not None else None,
+        )
 
     @app.post(
         "/api/v1/study-guides/{guide_id}/chapters/{chapter_id}/details",

@@ -2,7 +2,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ localApi: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  localApi: vi.fn(), storedGuide: false,
+  workspace: undefined as undefined | Record<string, unknown>,
+}));
 
 vi.mock("../src/local-api", () => ({ localApi: mocks.localApi }));
 vi.mock("../src/api", () => ({
@@ -12,10 +15,15 @@ vi.mock("../src/api", () => ({
     health: () => ({ operation: "health" }),
     listLibraries: () => ({ operation: "libraries" }),
     inspectVideo: () => ({ operation: "inspect" }),
+    prepareTranscript: (args: unknown) => ({ operation: "prepare-transcript", args }),
+    getTranscript: () => ({ operation: "transcript" }),
     getJob: ({ jobId }: { jobId: string }) => ({ operation: "job", jobId }),
     createStudyGuide: (args: unknown) => ({ operation: "guide", args }),
+    cancelJob: () => ({ operation: "cancel" }),
+    retryJob: () => ({ operation: "retry" }),
     getStudyGuide: () => ({ operation: "guide-read" }),
-    getVideoWorkspace: () => ({ operation: "workspace" }),
+    getStudyGuideWorkspace: () => ({ operation: "guide-workspace" }),
+    getVideoWorkspace: (args: unknown) => ({ operation: "workspace", args }),
     createChapterDetail: () => ({ operation: "detail" }),
     createChapterPractice: () => ({ operation: "practice" }),
     createReflection: () => ({ operation: "reflection" }),
@@ -43,6 +51,16 @@ const guide = {
       start_ms: 0, end_ms: 3000,
     }] },
   },
+};
+
+const transcript = {
+  revision_id: "revision-1", bvid: "BV1xx411c7mD", page: 1, cid: 1, title: "第一集",
+  track_id: "2080600637229272576", language: "zh", display_name: "中文", kind: "ai",
+  content_sha256: "hash", created_at: "now",
+  cues: [
+    { cue_id: "c000001", start_ms: 0, end_ms: 1000, text: "第一句" },
+    { cue_id: "c000002", start_ms: 1200, end_ms: 2500, text: "第二句" },
+  ],
 };
 
 let container: HTMLDivElement;
@@ -78,13 +96,26 @@ beforeEach(async () => {
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
     },
   } });
-  mocks.localApi.mockImplementation(async (request: { operation: string; jobId?: string }) => {
+  mocks.storedGuide = false;
+  mocks.workspace = undefined;
+  mocks.localApi.mockImplementation(async (request: { operation: string; jobId?: string; args?: any }) => {
     if (request.operation === "health") return { status: "ok" };
     if (request.operation === "libraries") return { libraries: [{ id: "1", name: "main" }] };
     if (request.operation === "inspect") return { job_id: "inspect-job" };
+    if (request.operation === "prepare-transcript") return { job_id: "transcript-job" };
+    if (request.operation === "transcript") return transcript;
     if (request.operation === "guide") return { job_id: "guide-job" };
     if (request.operation === "guide-read") return guide;
-    if (request.operation === "workspace") return { guide_id: null };
+    if (request.operation === "guide-workspace") {
+      mocks.storedGuide = true;
+      return mocks.workspace ?? { guide, notes: [], reflections: [] };
+    }
+    if (request.operation === "workspace") return {
+      bvid: request.args?.bvid,
+      page: request.args?.page,
+      guide_id: mocks.storedGuide && request.args?.bvid === "BV1xx411c7mD" ? "guide-1" : null,
+      revision_id: mocks.storedGuide && request.args?.bvid === "BV1xx411c7mD" ? "revision-1" : null,
+    };
     if (request.operation === "job" && request.jobId === "inspect-job") return {
       status: "succeeded", progress: { phase: "completed", percent: 100 },
       result: {
@@ -93,9 +124,13 @@ beforeEach(async () => {
         tracks: [{ track_id: "2080600637229272576", language: "zh", display_name: "中文", kind: "ai" }],
       },
     };
+    if (request.operation === "job" && request.jobId === "transcript-job") return {
+      status: "succeeded", progress: { phase: "completed", percent: 100 },
+      result: { bvid: "BV1xx411c7mD", page: 1, revision_id: "revision-1" },
+    };
     if (request.operation === "job") return {
       status: "succeeded", progress: { phase: "completed", percent: 100 },
-      result: { guide_id: "guide-1" },
+      result: { guide_id: "guide-1", bvid: "BV1xx411c7mD", page: 1, revision_id: "revision-1" },
     };
     return {};
   });
@@ -114,6 +149,7 @@ afterEach(async () => {
 it("keeps outline, practice, and notes on separate pages", async () => {
   await flush(() => button("检查字幕").click());
   await flush(() => button("创建轻量学习大纲").click());
+  await flush(() => button("确认并开始").click());
   expect(container.textContent).toContain("主要章节");
   expect(container.textContent).not.toContain("核心是什么？");
 
@@ -126,23 +162,32 @@ it("keeps outline, practice, and notes on separate pages", async () => {
   expect(container.textContent).not.toContain("核心是什么？");
 });
 
-it("sends stable track descriptors when generating a guide", async () => {
+it("prepares a server-bound transcript and generates only from its revision", async () => {
   await flush(() => button("检查字幕").click());
   await flush(() => button("创建轻量学习大纲").click());
-  const request = mocks.localApi.mock.calls
+  const prepare = mocks.localApi.mock.calls
     .map(([value]) => value)
-    .find((value: any) => value.operation === "guide") as any;
-  expect(request.args.requestBody).toMatchObject({
+    .find((value: any) => value.operation === "prepare-transcript") as any;
+  expect(prepare.args.requestBody).toMatchObject({
     track_id: "2080600637229272576",
     track_language: "zh",
     track_display_name: "中文",
     track_kind: "ai",
   });
+  expect(mocks.localApi.mock.calls.some(([value]) => value.operation === "guide")).toBe(false);
+  await flush(() => button("确认并开始").click());
+  const request = mocks.localApi.mock.calls.map(([value]) => value)
+    .find((value: any) => value.operation === "guide") as any;
+  expect(request.args.requestBody).toMatchObject({
+    revision_id: "revision-1", expected_bvid: "BV1xx411c7mD", expected_page: 1,
+  });
+  expect(request.args.requestBody).not.toHaveProperty("cid");
 });
 
 it("isolates navigation events by tab and restores a video session", async () => {
   await flush(() => button("检查字幕").click());
   await flush(() => button("创建轻量学习大纲").click());
+  await flush(() => button("确认并开始").click());
   expect(container.textContent).toContain("主要章节");
   const addListener = chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>;
   const listener = addListener.mock.calls[0]![0] as (message: unknown) => void;
@@ -171,4 +216,105 @@ it("isolates navigation events by tab and restores a video session", async () =>
     context: { supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0 },
   }));
   expect(container.textContent).toContain("主要章节");
+});
+
+it("restores all saved pages without creating another guide", async () => {
+  mocks.storedGuide = true;
+  mocks.workspace = {
+    guide,
+    notes: [{
+      note_id: "note-1", revision_id: "revision-1", timestamp_ms: 1200,
+      note_type: "note", body: "保存的笔记", created_at: "now", updated_at: "now",
+    }],
+    reflections: [{
+      reflection_id: "reflection-1", guide_id: "guide-1", question_id: "q1",
+      response: "保存的回答", status: "succeeded",
+      feedback: { covered: ["已掌握"], missing: [], misconceptions: [] },
+    }],
+  };
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const sendMessage = chrome.tabs.sendMessage as ReturnType<typeof vi.fn>;
+  sendMessage.mockResolvedValue({
+    supported: true, bvid: "BV1yy411c7mD", page: 1, currentTimeMs: 0,
+  });
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1yy411c7mD", page: 1, currentTimeMs: 0 },
+  }));
+  sendMessage.mockResolvedValue({
+    supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0,
+  });
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0 },
+  }));
+  await flush();
+  expect(container.textContent).toContain("主要章节");
+
+  await flush(() => button("练习").click());
+  expect(container.textContent).toContain("保存的回答");
+  expect(container.textContent).toContain("已掌握");
+  await flush(() => button("笔记").click());
+  expect(container.textContent).toContain("保存的笔记");
+  expect(mocks.localApi.mock.calls.some(([value]) => value.operation === "guide")).toBe(false);
+});
+
+it("shows the complete timeline, highlights the current cue, and seeks without pausing", async () => {
+  await flush(() => button("检查字幕").click());
+  await flush(() => button("字幕").click());
+  expect(container.textContent).toContain("第一句");
+  expect(container.textContent).toContain("第二句");
+  const current = container.querySelector('[aria-current="true"]');
+  expect(current?.textContent).toContain("第一句");
+  const second = [...container.querySelectorAll("button.cue")][1] as HTMLButtonElement;
+  await flush(() => second.click());
+  expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, { type: "seek", timestampMs: 1200 });
+  expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(1, expect.objectContaining({ type: "pause" }));
+
+  const list = container.querySelector(".transcript-list")!;
+  await flush(() => list.dispatchEvent(new Event("scroll", { bubbles: true })));
+  expect(container.textContent).toContain("回到当前字幕");
+  await flush(() => button("回到当前字幕").click());
+  expect(container.textContent).not.toContain("回到当前字幕");
+});
+
+it("writes a late P1 inspection back to P1 after switching to P2", async () => {
+  const original = mocks.localApi.getMockImplementation()!;
+  let finishInspection: ((value: unknown) => void) | undefined;
+  mocks.localApi.mockImplementation(async (request: { operation: string; jobId?: string }) => {
+    if (request.operation === "job" && request.jobId === "inspect-job") {
+      return new Promise((resolve) => { finishInspection = resolve; });
+    }
+    return original(request);
+  });
+  await flush(() => button("检查字幕").click());
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const sendMessage = chrome.tabs.sendMessage as ReturnType<typeof vi.fn>;
+  sendMessage.mockResolvedValue({
+    supported: true, bvid: "BV1xx411c7mD", page: 2, currentTimeMs: 0,
+  });
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1xx411c7mD", page: 2, currentTimeMs: 0 },
+  }));
+  await flush(() => finishInspection?.({
+    status: "succeeded", progress: { phase: "completed", percent: 100 },
+    result: {
+      bvid: "BV1xx411c7mD", page: 1, subtitle_status: "available",
+      tracks: [{ track_id: "99", language: "zh", display_name: "P1专属", kind: "ai" }],
+    },
+  }));
+  expect(container.textContent).toContain("P2");
+  expect(container.textContent).not.toContain("P1专属");
+
+  sendMessage.mockResolvedValue({
+    supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0,
+  });
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0 },
+  }));
+  expect(container.textContent).toContain("P1专属");
 });

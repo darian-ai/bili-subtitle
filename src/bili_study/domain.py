@@ -24,6 +24,10 @@ class SubtitleTrackAmbiguous(DomainError):
     """More than one current track matches the inspected stable descriptors."""
 
 
+class TranscriptSourceMismatch(DomainError):
+    """A saved revision does not belong to the caller's expected canonical BV/P."""
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptCue:
     cue_id: str
@@ -257,13 +261,14 @@ def to_json(value: TranscriptRevision | StudyGuide | PersonalNote) -> str:
 
 
 def transcript_from_dict(raw: dict[str, Any]) -> TranscriptRevision:
+    page = int(raw["page"])
     return TranscriptRevision(
         revision_id=str(raw["revision_id"]),
         schema_version=int(raw["schema_version"]),
         bvid=str(raw["bvid"]),
-        page=int(raw["page"]),
+        page=page,
         cid=int(raw["cid"]),
-        title=str(raw["title"]),
+        title=str(raw.get("title") or f"P{page}（历史记录）"),
         track_id=int(raw["track_id"]) if raw.get("track_id") is not None else None,
         language=str(raw["language"]),
         display_name=str(raw["display_name"]),

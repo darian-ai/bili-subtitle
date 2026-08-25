@@ -10,6 +10,7 @@ export type JobResponse = {
     kind: string;
     progress?: (JobProgressResponse | null);
     result?: (Record<string, any> | null);
+    retry_of?: (string | null);
     status: JobResponse.status;
     updated_at: string;
 };
@@ -17,6 +18,8 @@ export namespace JobResponse {
     export enum status {
         QUEUED = 'queued',
         RUNNING = 'running',
+        CANCEL_REQUESTED = 'cancel_requested',
+        CANCELLED = 'cancelled',
         SUCCEEDED = 'succeeded',
         FAILED = 'failed',
         INTERRUPTED = 'interrupted',

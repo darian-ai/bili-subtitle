@@ -134,7 +134,7 @@ class LibraryRegistry:
 
 
 class StudyRepository:
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, database: Path) -> None:
         self.database = database
@@ -201,7 +201,8 @@ class StudyRepository:
                         job_id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
                         request TEXT NOT NULL, result TEXT, error_code TEXT,
                         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                        progress TEXT
+                        progress TEXT, retry_of TEXT,
+                        FOREIGN KEY(retry_of) REFERENCES api_jobs(job_id)
                     );
                     CREATE TABLE IF NOT EXISTS chapter_details (
                         guide_id TEXT NOT NULL, chapter_id TEXT NOT NULL, payload TEXT NOT NULL,
@@ -223,7 +224,9 @@ class StudyRepository:
                 columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(api_jobs)")}
                 if "progress" not in columns:
                     connection.execute("ALTER TABLE api_jobs ADD COLUMN progress TEXT")
-                connection.execute("PRAGMA user_version = 3")
+                if "retry_of" not in columns:
+                    connection.execute("ALTER TABLE api_jobs ADD COLUMN retry_of TEXT")
+                connection.execute("PRAGMA user_version = 4")
         except (sqlite3.Error, StorageError) as exc:
             if backup.exists():
                 shutil.copy2(backup, self.database)
@@ -253,6 +256,18 @@ class StudyRepository:
         if row is None:
             raise StorageError("知识库中没有 Transcript。")
         return transcript_from_dict(json.loads(str(row["payload"])))
+
+    def latest_transcript_for_video(self, bvid: str, page: int) -> TranscriptRevision | None:
+        """Return the newest locally saved revision for exactly one canonical BV/P."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM transcripts ORDER BY rowid DESC"
+            ).fetchall()
+        for row in rows:
+            transcript = transcript_from_dict(json.loads(str(row["payload"])))
+            if transcript.bvid == bvid and transcript.page == page:
+                return transcript
+        return None
 
     def cache_get(self, fingerprint: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -334,6 +349,14 @@ class StudyRepository:
                 return json.loads(str(row["guide_payload"]))
         return None
 
+    def latest_guide_for_revision(self, revision_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM guides WHERE revision_id = ? ORDER BY rowid DESC LIMIT 1",
+                (revision_id,),
+            ).fetchone()
+        return json.loads(str(row["payload"])) if row is not None else None
+
     def save_note(self, note: PersonalNote) -> None:
         with self.connect() as connection:
             connection.execute(
@@ -348,14 +371,21 @@ class StudyRepository:
             ).fetchall()
         return tuple(PersonalNote(**json.loads(str(row["payload"]))) for row in rows)
 
-    def create_job(self, kind: str, request: dict[str, Any], timestamp: str) -> str:
+    def create_job(
+        self,
+        kind: str,
+        request: dict[str, Any],
+        timestamp: str,
+        *,
+        retry_of: str | None = None,
+    ) -> str:
         job_id = str(uuid4())
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO api_jobs "
                 "(job_id, kind, status, request, result, error_code, "
-                "created_at, updated_at, progress) "
-                "VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?, ?)",
+                "created_at, updated_at, progress, retry_of) "
+                "VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?, ?, ?)",
                 (
                     job_id,
                     kind,
@@ -363,6 +393,7 @@ class StudyRepository:
                     timestamp,
                     timestamp,
                     json.dumps({"phase": "queued", "percent": 0}),
+                    retry_of,
                 ),
             )
         return job_id
@@ -403,28 +434,42 @@ class StudyRepository:
         error_code: str | None,
         timestamp: str,
     ) -> None:
-        if status not in {"succeeded", "failed", "interrupted"}:
+        if status not in {"succeeded", "failed", "interrupted", "cancelled"}:
             raise StorageError("API 任务终态无效。")
         payload = json.dumps(result, ensure_ascii=False, sort_keys=True) if result else None
         with self.connect() as connection:
+            allowed_status = (
+                "('running', 'cancel_requested')" if status == "cancelled" else "('running')"
+            )
+            phase = {
+                "succeeded": "completed",
+                "cancelled": "cancelled",
+                "interrupted": "interrupted",
+                "failed": "failed",
+            }[status]
             cursor = connection.execute(
                 "UPDATE api_jobs SET status = ?, result = ?, error_code = ?, updated_at = ?, "
                 "progress = ? "
-                "WHERE job_id = ? AND status = 'running'",
+                f"WHERE job_id = ? AND status IN {allowed_status}",
                 (
                     status,
                     payload,
                     error_code,
                     timestamp,
-                    json.dumps(
-                        {
-                            "phase": "completed" if status == "succeeded" else "failed",
-                            "percent": 100,
-                        }
-                    ),
+                    json.dumps({"phase": phase, "percent": 100}),
                     job_id,
                 ),
             )
+            if cursor.rowcount == 0 and status != "cancelled":
+                cursor = connection.execute(
+                    "UPDATE api_jobs SET status = 'cancelled', result = NULL, error_code = NULL, "
+                    "updated_at = ?, progress = ? WHERE job_id = ? AND status = 'cancel_requested'",
+                    (
+                        timestamp,
+                        json.dumps({"phase": "cancelled", "percent": 100}),
+                        job_id,
+                    ),
+                )
         if cursor.rowcount != 1:
             raise StorageError("API 任务状态转换无效。")
 
@@ -445,15 +490,55 @@ class StudyRepository:
             "progress": json.loads(str(row["progress"])) if row["progress"] else None,
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
+            "retry_of": str(row["retry_of"]) if row["retry_of"] else None,
         }
 
+    def cancel_job(self, job_id: str, timestamp: str) -> str:
+        """Request cancellation atomically and return the resulting status."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM api_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise StorageError("API 任务不存在。")
+            current = str(row["status"])
+            if current == "queued":
+                resulting = "cancelled"
+                phase = "cancelled"
+            elif current == "running":
+                resulting = "cancel_requested"
+                phase = "cancel_requested"
+            elif current in {"cancel_requested", "cancelled"}:
+                return current
+            else:
+                return current
+            connection.execute(
+                "UPDATE api_jobs SET status = ?, updated_at = ?, progress = ? WHERE job_id = ?",
+                (
+                    resulting,
+                    timestamp,
+                    json.dumps(
+                        {"phase": phase, "percent": 100 if resulting == "cancelled" else 99}
+                    ),
+                    job_id,
+                ),
+            )
+        return resulting
+
+    def retry_job(self, job_id: str, timestamp: str) -> tuple[str, str, dict[str, Any]] | None:
+        """Return the immutable request for retryable terminal work."""
+        record = self.job(job_id)
+        if record["status"] not in {"failed", "interrupted", "cancelled"}:
+            return None
+        return str(record["kind"]), job_id, dict(record["request"])
+
     def recover_jobs(self, timestamp: str) -> tuple[str, ...]:
-        """Move interrupted work back to the serial queue after service restart."""
+        """Resume unstarted work, but never replay an in-flight billable request."""
         with self.connect() as connection:
             connection.execute(
-                "UPDATE api_jobs SET status = 'queued', error_code = 'service_restarted', "
-                "updated_at = ?, progress = ? WHERE status = 'running'",
-                (timestamp, json.dumps({"phase": "queued", "percent": 0})),
+                "UPDATE api_jobs SET status = 'interrupted', error_code = 'service_restarted', "
+                "updated_at = ?, progress = ? WHERE status IN ('running', 'cancel_requested')",
+                (timestamp, json.dumps({"phase": "interrupted", "percent": 100})),
             )
             rows = connection.execute(
                 "SELECT job_id FROM api_jobs WHERE status = 'queued' ORDER BY rowid"

@@ -7,7 +7,7 @@
 | Feature | Learning Assistant MVP |
 | 工作分支 | `feature/learning-assistant-mvp` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 实施中；已确认 3/5 次独立学习记录，剩余真实验收不得由自动化替代 |
+| 状态 | 实施中；已确认 4/5 次独立学习记录，第 4 次被阻断且服务重启未测试 |
 | 日期 | 2026-08-25 |
 
 ## 目标与进入门禁
@@ -21,10 +21,27 @@
 ### 已有内容自动恢复
 
 - 用户打开曾经生成过内容的 BV/P 并选定知识库后，侧栏必须只查询本地服务，自动加载该 BV/P 最近生成的指南；不得要求重新检查字幕、填写 Provider 或再次调用模型。
+- 普通“创建大纲”“生成详情”“生成练习”和相同回答的“获取反馈”必须先查询本地记录；只有服务明确返回无记录才允许首次生成，查询失败不得降级为生成。只有独立的“重新生成”操作可以再次调用模型并创建新版本。
 - 默认加载最近生成的版本，并提供“其他版本”入口。版本可以来自不同 Provider、模型、轨道或 Transcript revision。
 - 加载内容必须继续绑定生成时的 revision 和 EvidenceRef，显示保存时的字幕轨道、revision、Provider/模型和生成时间；不得把旧证据静默重绑到当前字幕。
 - 用户主动检查字幕后若发现来源变化，旧版本仍可作为历史版本加载；重新生成创建新版本，不覆盖旧版本或个人内容。
 - 一次 workspace 加载恢复大纲、章节详情、练习、小测尝试、总结、导图、个人笔记、作答和反馈。未提交草稿只保存在浏览器本地。
+
+### 标签页侧栏归属
+
+- manifest 的默认 side panel 不得形成跨标签页的全局实例。每个普通 Bilibili 视频标签页只有在用户点击扩展后才打开绑定其 `tabId` 的独立侧栏。
+- 切到未打开侧栏的标签页或非普通视频页面时隐藏侧栏；返回已打开的视频标签页时恢复该标签页原实例。同标签页 Bilibili SPA 切换 BV/P 时保持侧栏打开并切换独立 workspace。
+- 同一标签页导航到不支持页面时关闭并禁用侧栏；返回视频页后需要重新点击一次。侧栏没有合法 `tabId` 时不得回退查询当前活动标签页。
+
+### 多 P 来源强绑定与字幕时间轴
+
+- 检查接口只发现规范 BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库与选定轨道描述，后端必须重新解析 BV/P→CID，客户端不得提交 CID 或标题。
+- 单轨检查后自动准备字幕；多轨必须由用户明确选择并点击“加载字幕”。指南只接受已保存的 Transcript `revision_id` 与预期 BV/P，来源不匹配稳定失败且不得调用 Provider。
+- workspace 同时返回该 BV/P 最近保存的 Transcript revision；已有指南默认显示其绑定 revision，新检查得到的 revision 只作为待生成版本，不覆盖旧指南。
+- 独立字幕页完整显示时间戳和 cue 文本；间隙无高亮，重叠时使用最后开始的 cue。默认跟随播放位置，手动滚动暂停，明确恢复后继续；点击 cue 只跳转起点，不暂停视频。
+- 长字幕使用浏览器原生延迟渲染优化，但保留完整列表语义、键盘操作和可访问名称。旧 revision 缺少分集标题时只显示 `P序号（历史记录）`，不得暗示已重新验证。
+- 检查、字幕准备、workspace 与生成结果均绑定启动时的 `tabId + library + BV/P` owner；所有任务结果携带 BV/P/revision，应用前再次核对，迟到结果只能写回原作用域。
+- 创建或重新生成前必须显示 P、分集标题、轨道、revision 和 Provider 的确认面板；确认前不得调用模型。取消、失败和重新生成期间继续显示旧指南，只有来源匹配的新指南成功后才切换。
 
 ### 任务取消、恢复与重试
 
@@ -67,6 +84,11 @@
 ## 公共接口与数据类型
 
 ```text
+GET  /api/v1/videos/{bvid}/pages/{page}/workspace?library=...
+POST /api/v1/videos/inspect
+POST /api/v1/videos/{bvid}/pages/{page}/transcripts
+GET  /api/v1/transcripts/{revision_id}?library=...
+POST /api/v1/study-guides
 GET  /api/v1/videos/{bvid}/pages/{page}/study-guides?library=...
 GET  /api/v1/study-guides/{guide_id}/workspace?library=...
 POST /api/v1/jobs/{job_id}/cancel
@@ -81,7 +103,7 @@ POST /api/v1/cache/clear
 ```
 
 - 长操作继续返回 `202 + job_id`；OpenAPI 是扩展唯一接口来源。
-- 新增 `StoredGuideSummary`、`StudyWorkspace`、`QuizAttempt`、`StudySummary`、`MindMapTree`、`GenerationUsage` 和 `CacheInventory` DTO/领域模型。
+- 新增 `VideoWorkspaceLookup`、`StoredGuideSummary`、`StudyWorkspace`、`ReflectionAttempt`、`QuizAttempt`、`StudySummary`、`MindMapTree`、`GenerationUsage` 和 `CacheInventory` DTO/领域模型。
 - job 状态扩展为 `queued|running|cancel_requested|cancelled|succeeded|failed|interrupted`。
 - SQLite schema 升级到 v4，规范化保存 BV/P 来源键、指南生成元数据、测验尝试、总结、导图、usage、重试关系和取消状态；旧 v3 数据前向迁移并保留备份。
 - `bili-study config provider set` 新增可选 `--input-price-per-million`、`--output-price-per-million` 和 `--currency`；旧配置继续可读。
@@ -105,5 +127,7 @@ POST /api/v1/cache/clear
 | 编号 | 级别 | 问题 | 处置状态 |
 |---|---|---|---|
 | P10-001 | 阻断 | 平台字幕轨道数字 ID 轮换后，生成大纲要求手动重选轨道 | 已实现“原 ID 优先、稳定描述唯一回退、多候选强制重选”；待真实复验 |
-| P10-002 | 阻断 | 不同标签页及同标签页不同 BV/P 共用一份侧栏状态，返回后内容丢失 | 已实现标签页原生侧栏隔离、BV/P 会话恢复和本地最新指南零模型加载；待三标签页真实复验 |
+| P10-002 | 阻断 | P1 检查期间切换 P2，P1 迟到结果污染 P2；后端同时信任客户端 CID/标题，无法形成强来源边界 | 第 4 次记录重新打开；已改为 owner 作用域回写、服务端重解析 BV/P 和 revision 生成门禁，自动化通过，真实复验待执行 |
 | P10-003 | 阻断 | 证据反馈缺少明确输出 schema，修复后仍可能格式无效 | 已补齐反馈 schema、问题证据边界校验和失败作答持久化；待真实复验 |
+| P10-004 | 阻断 | 默认全局 side panel 导致未点击标签页和非 Bilibili 页面仍显示侧栏 | 已改为仅受支持视频标签页启用的 tab-specific panel；自动化通过，Chrome/Edge 真实复验待执行 |
+| P10-005 | 阻断 | 长任务缺少停止与显式重试，服务重启可能重复发送计费请求 | 已实现取消状态机、重启中断与 `retry_of`；自动化已覆盖核心状态，真实在途 Provider/重启复验待执行 |

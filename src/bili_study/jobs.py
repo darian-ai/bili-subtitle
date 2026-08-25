@@ -11,6 +11,7 @@ from bili_study.domain import (
     DomainError,
     SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
+    TranscriptSourceMismatch,
     now_iso,
 )
 from bili_study.provider import ProviderError
@@ -28,6 +29,10 @@ ProgressCallback = Callable[[str, int], None]
 JobHandler = Callable[[dict[str, Any], ProgressCallback], dict[str, Any]]
 
 
+class JobCancelled(DomainError):
+    """Internal cooperative-cancellation signal; never exposed as a failure."""
+
+
 def stable_error_code(exc: BaseException) -> str:
     if isinstance(exc, AuthenticationRequired):
         return "bilibili_authentication_required"
@@ -43,6 +48,8 @@ def stable_error_code(exc: BaseException) -> str:
         return "subtitle_track_ambiguous"
     if isinstance(exc, SubtitleTrackUnavailable):
         return "subtitle_track_unavailable"
+    if isinstance(exc, TranscriptSourceMismatch):
+        return "transcript_source_mismatch"
     if isinstance(exc, DomainError):
         return "evidence_validation"
     if isinstance(exc, (MetadataError, SubtitleError)):
@@ -87,6 +94,20 @@ class PersistentJobWorker:
         self._queue.put(job_id)
         return job_id
 
+    def cancel(self, job_id: str) -> str:
+        return self.repository.cancel_job(job_id, now_iso())
+
+    def retry(self, job_id: str) -> str | None:
+        retry = self.repository.retry_job(job_id, now_iso())
+        if retry is None:
+            return None
+        kind, retry_of, request = retry
+        if kind not in self._handlers:
+            raise StorageError("API 任务类型无效。")
+        new_job_id = self.repository.create_job(kind, request, now_iso(), retry_of=retry_of)
+        self._queue.put(new_job_id)
+        return new_job_id
+
     def _run(self) -> None:
         while not self._stopping.is_set():
             job_id = self._queue.get()
@@ -99,11 +120,30 @@ class PersistentJobWorker:
                     continue
 
                 def progress(phase: str, percent: int, current_job_id: str = job_id) -> None:
+                    if self.repository.job(current_job_id)["status"] == "cancel_requested":
+                        raise JobCancelled
                     self.repository.update_job_progress(current_job_id, phase, percent, now_iso())
 
                 try:
                     result = handler(record["request"], progress)
+                except JobCancelled:
+                    self.repository.complete_job(
+                        job_id,
+                        status="cancelled",
+                        result=None,
+                        error_code=None,
+                        timestamp=now_iso(),
+                    )
                 except BaseException as exc:  # worker must preserve the next queued job
+                    if self.repository.job(job_id)["status"] == "cancel_requested":
+                        self.repository.complete_job(
+                            job_id,
+                            status="cancelled",
+                            result=None,
+                            error_code=None,
+                            timestamp=now_iso(),
+                        )
+                        continue
                     self.repository.complete_job(
                         job_id,
                         status="failed",
@@ -112,6 +152,15 @@ class PersistentJobWorker:
                         timestamp=now_iso(),
                     )
                 else:
+                    if self.repository.job(job_id)["status"] == "cancel_requested":
+                        self.repository.complete_job(
+                            job_id,
+                            status="cancelled",
+                            result=None,
+                            error_code=None,
+                            timestamp=now_iso(),
+                        )
+                        continue
                     self.repository.complete_job(
                         job_id,
                         status="succeeded",

@@ -1,23 +1,35 @@
+import { sidePanelConfiguration } from "../src/sidepanel-lifecycle";
+
+async function configureTab(tabId: number, url: string | undefined): Promise<void> {
+  const options = sidePanelConfiguration(tabId, url);
+  await Promise.all([
+    chrome.sidePanel.setOptions({
+      tabId,
+      ...options,
+    }),
+    options.enabled ? chrome.action.enable(tabId) : chrome.action.disable(tabId),
+  ]);
+}
+
 export default defineBackground(() => {
-  chrome.action.onClicked.addListener((tab) => {
-    if (tab.id !== undefined) {
-      const configuring = chrome.sidePanel.setOptions({
-        tabId: tab.id,
-        path: `sidepanel.html?tabId=${tab.id}`,
-        enabled: true,
-      });
-      // open() must be invoked synchronously inside the click callback. Awaiting
-      // setOptions first causes Chrome to discard the user-activation token.
-      const opening = chrome.sidePanel.open({ tabId: tab.id });
-      Promise.all([configuring, opening]).catch((error: unknown) => {
-        console.error("无法打开 bili-study 侧栏。", error);
-      });
+  chrome.sidePanel.setOptions({ enabled: false }).catch(() => undefined);
+  chrome.action.disable().catch(() => undefined);
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+
+  chrome.tabs.query({}).then((tabs) => Promise.all(
+    tabs.flatMap((tab) => tab.id === undefined ? [] : [configureTab(tab.id, tab.url)]),
+  )).catch(() => undefined);
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.url !== undefined || changeInfo.status === "complete") {
+      configureTab(tabId, tab.url).catch(() => undefined);
     }
   });
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
 
   chrome.runtime.onMessage.addListener((message, sender) => {
     if (message?.type === "content-video-navigation" && sender.tab?.id !== undefined) {
+      configureTab(sender.tab.id, message.context?.supported ? sender.tab.url : undefined)
+        .catch(() => undefined);
       chrome.runtime.sendMessage({
         type: "video-navigation",
         tabId: sender.tab.id,

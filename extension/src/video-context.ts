@@ -5,6 +5,15 @@ export interface VideoContext {
   currentTimeMs: number;
 }
 
+export function isSupportedVideoUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return parseVideoContext(url).supported;
+  } catch {
+    return false;
+  }
+}
+
 export function parseVideoContext(url: string, currentTimeSeconds = 0): VideoContext {
   const parsed = new URL(url);
   const match = /^\/video\/(BV[A-Za-z0-9]{10})(?:\/|$)/.exec(parsed.pathname);
@@ -25,4 +34,11 @@ export function activeChapter<T extends { start_ms: number; end_ms: number }>(
   currentTimeMs: number
 ): T | undefined {
   return chapters.find((chapter) => currentTimeMs >= chapter.start_ms && currentTimeMs <= chapter.end_ms);
+}
+
+export function activeCue<T extends { start_ms: number; end_ms: number }>(
+  cues: T[], currentTimeMs: number,
+): T | undefined {
+  return cues.filter((cue) =>
+    currentTimeMs >= cue.start_ms && currentTimeMs < cue.end_ms).at(-1);
 }

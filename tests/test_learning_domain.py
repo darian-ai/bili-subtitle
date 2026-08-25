@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -11,6 +11,7 @@ from bili_study.domain import (
     TranscriptCue,
     build_transcript,
     generation_fingerprint,
+    transcript_from_dict,
 )
 from bili_study.services import chunk_transcript, import_bilibili_json
 
@@ -30,6 +31,13 @@ def transcript(texts: tuple[str, ...] = ("第一条", "第二条", "最后一条
         ),
         created_at="2026-08-22T00:00:00+00:00",
     )
+
+
+def test_legacy_transcript_without_title_is_labeled_as_unverified_history() -> None:
+    raw = asdict(transcript())
+    raw.pop("title")
+    restored = transcript_from_dict(raw)
+    assert restored.title == "P1（历史记录）"
 
 
 def test_transcript_identity_evidence_and_hash_are_stable() -> None:

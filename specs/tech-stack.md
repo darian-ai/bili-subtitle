@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | 阶段九 Local API 与 Chrome/Edge 扩展已完成验收；阶段十尚未开始 |
+| 当前状态 | 阶段九 Local API 与 Chrome/Edge 扩展已完成验收；阶段十学习助手 MVP 实施中 |
 | 最后更新 | 2026-08-25 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
@@ -185,6 +185,7 @@ POST /api/v1/reflections
 - 使用 Manifest V3、WXT、TypeScript 和 React，首期只构建 Chrome/Edge 侧栏。
 - Content script 只读取受支持视频页的 URL、当前 P、HTML video 当前时间和播放跳转能力。
 - Side panel 显示连接/认证/任务状态、轨道选择、学习大纲、章节详情、引导问题、个人笔记和复述反馈。
+- 默认全局 panel 在运行时禁用；后台只为普通 Bilibili 视频配置带 `tabId` 的 panel，应用状态按 `tabId + library + BV/P` 隔离并以本地 workspace 为恢复真源。
 - Background/service worker 负责本地 API 通信和页面上下文转发，不保存模型或 Bilibili 凭据。
 - Bilibili SPA 导航后重新识别上下文；页面不受支持时清楚禁用学习操作。
 - 默认只跟随高亮当前章节，不自动暂停、不主动弹题、不在用户点击前发起模型请求。

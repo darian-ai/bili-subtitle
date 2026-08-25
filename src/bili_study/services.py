@@ -259,6 +259,7 @@ class GuideGenerator:
             "fingerprint": fingerprint,
             "output_language": config.output_language,
         }
+        update("persisting", 85)
         self.repository.cache_put(fingerprint, "study_guide", payload)
         self.repository.save_guide(guide, payload)
         self.repository.finish_task(task_id, "succeeded", None, now_iso())

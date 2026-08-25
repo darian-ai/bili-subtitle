@@ -139,7 +139,7 @@ def test_repository_migration_backup_and_corruption(tmp_path: Path) -> None:
         practice_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chapter_practices'"
         ).fetchone()
-    assert version == 3 and "progress" in columns and practice_table is not None
+        assert version == 4 and {"progress", "retry_of"} <= columns and practice_table is not None
 
     corrupt = tmp_path / "broken.sqlite3"
     corrupt.write_bytes(b"not sqlite")

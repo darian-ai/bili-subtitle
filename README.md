@@ -168,7 +168,7 @@ Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`，启用�
 - Chrome 选择 `extension\.output\chrome-mv3`。
 - Edge 选择 `extension\.output\edge-mv3`。
 
-点击工具栏中的 bili-study 图标打开侧栏。首次连接时，在另一个 PowerShell 生成五分钟有效、单次使用的配对码：
+在普通 Bilibili 视频标签页点击工具栏中的 bili-study 图标，打开只属于该标签页的侧栏。每个视频标签页首次使用时各点击一次；未点击的标签页和非普通视频页面不显示该侧栏，切回已打开的标签页会恢复其原实例。首次连接时，在另一个 PowerShell 生成五分钟有效、单次使用的配对码：
 
 ```powershell
 bili-study plugin pair
@@ -176,7 +176,7 @@ bili-study plugin pair
 
 把配对码输入侧栏。Bearer token 只保存在扩展本地存储并绑定当前扩展 Origin；本地服务重启后 token 会失效，需要重新配对。扩展不保存或读取 Bilibili Cookie、Provider API Key、二维码密钥或字幕签名 URL。
 
-打开普通 Bilibili 视频页后，依次选择知识库、填写已配置的 Provider 名称、检查字幕轨道，再主动点击“创建轻量学习大纲”。可容纳的字幕只调用一次模型，超预算内容才使用 Map/Reduce；详情和按章练习仍只在点击后生成。侧栏通过“大纲 / 练习 / 笔记”多页面导航展示内容，正文默认为 18px，并随用户拖动后的浏览器侧栏宽度响应，不会自动暂停视频、弹题或上传字幕。
+打开普通 Bilibili 视频页后，侧栏会先按知识库和 BV/P 从本地恢复已有大纲、详情、练习、回答、反馈和笔记，不要求 Provider，也不访问 Bilibili 或模型。只有本地明确没有记录时，才依次填写 Provider、检查字幕轨道并主动点击“创建轻量学习大纲”；已有记录只有点击独立的“重新生成”才会再次调用模型并创建新版本。可容纳的字幕只调用一次模型，超预算内容才使用 Map/Reduce；详情和按章练习仍只在首次缺失时按点击生成。侧栏通过“大纲 / 练习 / 笔记”多页面导航展示内容，正文默认为 18px，并随用户拖动后的浏览器侧栏宽度响应，不会自动暂停视频、弹题或上传字幕。
 
 个人时间戳笔记写入知识库的 `notes\`，AI 指南写入 `generated\videos\`；重新生成 AI 内容不会覆盖个人 Markdown。任务、指南和笔记状态保存在本机 SQLite，服务重启后会恢复未完成任务。
 
