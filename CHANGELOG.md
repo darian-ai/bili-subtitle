@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 0.2.0-alpha（候选）
+
+- 新增只监听 `127.0.0.1` 的 FastAPI Local API、版本化 OpenAPI、生成的 TypeScript client，以及 Chrome/Edge 双构建漂移门禁。
+- 新增五分钟单次配对码、扩展 Origin 绑定 Bearer、Host/CORS/Content-Type/schema/正文大小/速率/并发限制。
+- 新增单 worker 持久 job、合法状态转换和服务重启恢复；失败响应使用稳定脱敏分类。
+- 新增 WXT + React Manifest V3 侧栏，覆盖 BV/P/播放时间、轨道选择、主动大纲、章节跟随、按需详情、时间戳笔记、复述反馈和证据跳转。
+- 新增 Vitest、Playwright 模拟视频页和 Chrome/Edge 构建；真实浏览器脱敏验收和待合并 CI 完成前不发布该版本。
+
 ## 0.2.0.dev1
 
 - 新增版本化 Transcript、稳定 cue ID、EvidenceRef 与完整视频证据校验。

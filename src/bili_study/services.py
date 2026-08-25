@@ -264,6 +264,49 @@ class GuideGenerator:
         evidence.resolve(transcript)
         return payload, _metrics(usages, int((time.monotonic() - started) * 1000))
 
+    def generate_reflection(
+        self,
+        transcript: TranscriptRevision,
+        question: GuidingQuestion,
+        response: str,
+    ) -> tuple[dict[str, Any], GenerationMetrics]:
+        if not response.strip():
+            raise DomainError("回答或复述不能为空。")
+        cues = question.evidence.resolve(transcript)
+        started = time.monotonic()
+
+        def validate(payload: dict[str, Any]) -> None:
+            for field in ("covered", "missing", "misconceptions"):
+                if not isinstance(payload.get(field), list) or any(
+                    not isinstance(item, str) for item in cast(list[object], payload.get(field))
+                ):
+                    raise ProviderStructureError("复述反馈 schema 无效。")
+            evidence = payload.get("evidence")
+            if not isinstance(evidence, list):
+                raise ProviderStructureError("复述反馈缺少证据。")
+            for item in cast(list[object], evidence):
+                _evidence(item, transcript).resolve(transcript)
+
+        payload, usages = self._request_json(
+            json.dumps(
+                {
+                    "task": "evidence_based_reflection_feedback",
+                    "question_id": question.question_id,
+                    "question": question.text,
+                    "response": response,
+                    "required_fields": ["covered", "missing", "misconceptions", "evidence"],
+                    "rules": [
+                        "只依据 DATA 判断；证据不足时在 missing 中明确无法判断",
+                        "evidence 只能引用 DATA 中的 cue ID",
+                    ],
+                    "data": [[cue.cue_id, cue.start_ms, cue.end_ms, cue.text] for cue in cues],
+                },
+                ensure_ascii=False,
+            ),
+            validator=validate,
+        )
+        return payload, _metrics(usages, int((time.monotonic() - started) * 1000))
+
     def _request_json(
         self,
         user: str,

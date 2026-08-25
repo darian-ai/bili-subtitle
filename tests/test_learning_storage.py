@@ -15,6 +15,7 @@ from bili_study.storage import (
     library_database,
     publish_generated,
     publish_note,
+    publish_reflection,
 )
 
 
@@ -84,6 +85,15 @@ def test_repository_roundtrip_cache_and_personal_note(tmp_path: Path) -> None:
         publish_note(library, note)
     generated = publish_generated(library, "guide:1", "# guide\n")
     assert generated.name == "guide_1.md"
+    reflection = publish_reflection(
+        library,
+        reflection_id="reflection-1",
+        revision_id=revision.revision_id,
+        question_id="q1",
+        response="我的复述",
+    )
+    assert "owner: user" in reflection.read_text(encoding="utf-8")
+    assert "我的复述" in reflection.read_text(encoding="utf-8")
     task_id = repository.start_task("guide", "start")
     assert repository.task_status(task_id) == ("running", None)
     repository.finish_task(task_id, "succeeded", None, "end")

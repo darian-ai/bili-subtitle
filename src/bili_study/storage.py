@@ -109,7 +109,7 @@ class LibraryRegistry:
         if resolved.exists() and any(resolved.iterdir()) and not marker.exists():
             raise StorageError("目标目录非空且不是 bili-study 知识库。")
         library = Library(str(uuid4()), clean_name, resolved)
-        for child in ("generated/videos", "notes"):
+        for child in ("generated/videos", "notes", "reviews"):
             (resolved / child).mkdir(parents=True, exist_ok=True)
         atomic_write(
             marker,
@@ -134,7 +134,7 @@ class LibraryRegistry:
 
 
 class StudyRepository:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, database: Path) -> None:
         self.database = database
@@ -196,7 +196,22 @@ class StudyRepository:
                         note_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL, payload TEXT NOT NULL,
                         FOREIGN KEY(revision_id) REFERENCES transcripts(revision_id)
                     );
-                    PRAGMA user_version = 1;
+                    CREATE TABLE IF NOT EXISTS api_jobs (
+                        job_id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
+                        request TEXT NOT NULL, result TEXT, error_code TEXT,
+                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS chapter_details (
+                        guide_id TEXT NOT NULL, chapter_id TEXT NOT NULL, payload TEXT NOT NULL,
+                        PRIMARY KEY(guide_id, chapter_id),
+                        FOREIGN KEY(guide_id) REFERENCES guides(guide_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS reflections (
+                        reflection_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL,
+                        question_id TEXT NOT NULL, payload TEXT NOT NULL,
+                        FOREIGN KEY(revision_id) REFERENCES transcripts(revision_id)
+                    );
+                    PRAGMA user_version = 2;
                     """
                 )
         except (sqlite3.Error, StorageError) as exc:
@@ -309,6 +324,110 @@ class StudyRepository:
             ).fetchall()
         return tuple(PersonalNote(**json.loads(str(row["payload"]))) for row in rows)
 
+    def create_job(self, kind: str, request: dict[str, Any], timestamp: str) -> str:
+        job_id = str(uuid4())
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO api_jobs VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?)",
+                (
+                    job_id,
+                    kind,
+                    json.dumps(request, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return job_id
+
+    def claim_job(self, job_id: str, timestamp: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE api_jobs SET status = 'running', updated_at = ? "
+                "WHERE job_id = ? AND status = 'queued'",
+                (timestamp, job_id),
+            )
+        return cursor.rowcount == 1
+
+    def complete_job(
+        self,
+        job_id: str,
+        *,
+        status: str,
+        result: dict[str, Any] | None,
+        error_code: str | None,
+        timestamp: str,
+    ) -> None:
+        if status not in {"succeeded", "failed", "interrupted"}:
+            raise StorageError("API 任务终态无效。")
+        payload = json.dumps(result, ensure_ascii=False, sort_keys=True) if result else None
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE api_jobs SET status = ?, result = ?, error_code = ?, updated_at = ? "
+                "WHERE job_id = ? AND status = 'running'",
+                (status, payload, error_code, timestamp, job_id),
+            )
+        if cursor.rowcount != 1:
+            raise StorageError("API 任务状态转换无效。")
+
+    def job(self, job_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM api_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        if row is None:
+            raise StorageError("API 任务不存在。")
+        return {
+            "job_id": str(row["job_id"]),
+            "kind": str(row["kind"]),
+            "status": str(row["status"]),
+            "request": json.loads(str(row["request"])),
+            "result": json.loads(str(row["result"])) if row["result"] else None,
+            "error_code": str(row["error_code"]) if row["error_code"] else None,
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def recover_jobs(self, timestamp: str) -> tuple[str, ...]:
+        """Move interrupted work back to the serial queue after service restart."""
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE api_jobs SET status = 'queued', error_code = 'service_restarted', "
+                "updated_at = ? WHERE status = 'running'",
+                (timestamp,),
+            )
+            rows = connection.execute(
+                "SELECT job_id FROM api_jobs WHERE status = 'queued' ORDER BY rowid"
+            ).fetchall()
+        return tuple(str(row["job_id"]) for row in rows)
+
+    def save_chapter_detail(self, guide_id: str, chapter_id: str, payload: dict[str, Any]) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO chapter_details VALUES (?, ?, ?)",
+                (guide_id, chapter_id, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            )
+
+    def chapter_details(self, guide_id: str) -> dict[str, dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT chapter_id, payload FROM chapter_details WHERE guide_id = ?", (guide_id,)
+            ).fetchall()
+        return {str(row["chapter_id"]): json.loads(str(row["payload"])) for row in rows}
+
+    def save_reflection(
+        self, reflection_id: str, revision_id: str, question_id: str, payload: dict[str, Any]
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO reflections VALUES (?, ?, ?, ?)",
+                (
+                    reflection_id,
+                    revision_id,
+                    question_id,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
 
 def library_database(paths: AppPaths, library: Library) -> Path:
     return paths.state_dir / "libraries" / library.library_id / "study.sqlite3"
@@ -336,4 +455,25 @@ def publish_generated(library: Library, name: str, content: str) -> Path:
         raise StorageError("生成文件名无效。")
     target = library.path / "generated" / "videos" / f"{safe}.md"
     atomic_write(target, content.encode("utf-8"))
+    return target
+
+
+def publish_reflection(
+    library: Library,
+    *,
+    reflection_id: str,
+    revision_id: str,
+    question_id: str,
+    response: str,
+) -> Path:
+    """Publish irreplaceable user text separately from rebuildable AI feedback."""
+    target = library.path / "reviews" / f"{reflection_id}.md"
+    content = (
+        "---\n"
+        f"schema_version: 1\nreflection_id: {reflection_id}\nrevision_id: {revision_id}\n"
+        f"question_id: {question_id}\nowner: user\n"
+        "---\n\n"
+        f"{response.rstrip()}\n"
+    )
+    atomic_write(target, content.encode("utf-8"), replace=False)
     return target

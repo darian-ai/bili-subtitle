@@ -28,9 +28,18 @@ def test_bili_study_exposes_only_implemented_command_tree() -> None:
     result = runner.invoke(study_app, ["--help"])
     assert result.exit_code == 0
     assert "extract" in result.output and "auth" in result.output
-    for implemented in ("library", "config", "transcript", "guide", "chapter", "note"):
+    for implemented in (
+        "library",
+        "config",
+        "transcript",
+        "guide",
+        "chapter",
+        "note",
+        "plugin",
+        "serve",
+    ):
         assert implemented in result.output
-    for unavailable in ("plugin", "serve", "doctor"):
+    for unavailable in ("doctor",):
         assert unavailable not in result.output
 
 
@@ -155,7 +164,7 @@ def test_new_console_main_preserves_shared_exit_codes(
 
 
 def test_unknown_commands_are_real_parameter_errors() -> None:
-    for command in ("plugin", "serve", "doctor"):
+    for command in ("doctor",):
         result = runner.invoke(study_app, [command])
         assert result.exit_code == 2
         assert command not in runner.invoke(study_app, ["--help"]).output

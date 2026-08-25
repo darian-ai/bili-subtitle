@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | V1、V2 兼容基线及阶段八学习后端已完成；Local API 与扩展尚未接入 |
+| 当前状态 | 阶段九 Local API 与扩展工程已接入；真实 Chrome/Edge 脱敏验收与待合并 CI 待执行 |
 | 最后更新 | 2026-08-24 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
@@ -31,19 +31,19 @@
 | 项目管理 | uv | 已实现 | 环境、依赖、运行、构建和工具安装 |
 | Python 构建 | Hatchling，`src/` 布局 | 已实现 | 继续发布标准 wheel/sdist |
 | 现有 CLI | Typer | 已实现 | `bili-subtitle`、认证和参数校验 |
-| 新 CLI | Typer，新增 `bili-study` 入口 | 已实现并扩展 | 已提供 `extract/auth/library/config/transcript/guide/chapter/note` |
+| 新 CLI | Typer，新增 `bili-study` 入口 | 已实现并扩展 | 已提供 `extract/auth/library/config/transcript/guide/chapter/note/plugin/serve` |
 | Bilibili HTTP | HTTPX 同步 Client | 已实现 | 单会话、固定超时、手动安全重定向和测试替身 |
 | 凭据 | keyring / Windows Credential Manager | 已实现并扩展 | 现有 Cookie 继续复用；模型 Key 使用独立服务槽位 |
 | 字幕与文件 | dataclasses、Decimal、JSON、pathlib、原子写入 | 已实现 | 原始 JSON、忠实 SRT、manifest 和 Windows 路径安全 |
-| 本地 API | FastAPI、Pydantic、Uvicorn | 计划采用 | 只绑定 loopback，提供版本化 JSON/OpenAPI 接口 |
+| 本地 API | FastAPI、Pydantic、Uvicorn | 已实现 | 只绑定 loopback，提供版本化 JSON/OpenAPI 接口 |
 | 本地状态 | 标准库 SQLite | 阶段八已实现 | 库注册、Transcript、任务、缓存、个人内容索引和 schema migration；FTS 后续实现 |
 | 云端模型 | OpenAI-compatible Chat Completions | 阶段八已完成 | 用户自备 HTTPS URL、模型与 Credential Manager Key；适配器与领域隔离 |
 | 向量检索 | SQLite FTS5 + 可替换向量端口 | 后续计划 | 首个实现计划锁定 `sqlite-vec`，不属于插件原型 |
-| 扩展框架 | WXT、TypeScript、React、Manifest V3 | 计划采用 | Chrome/Edge 侧栏、内容脚本、后台脚本和构建 |
-| JavaScript 工具 | Node.js 24、npm lockfile | 计划采用 | `npm ci` 提供可重现依赖和 CI |
+| 扩展框架 | WXT、TypeScript、React、Manifest V3 | 已实现 | Chrome/Edge 侧栏、内容脚本、后台脚本和构建 |
+| JavaScript 工具 | Node.js 24、npm lockfile | 已实现 | `npm ci` 提供可重现依赖和 CI |
 | Python 测试 | pytest、respx、pytest-cov | 已实现并扩展 | 保持不低于 90% 的分支覆盖率 |
 | Python 质量 | Ruff、strict Pyright | 已实现并扩展 | 新 Python 代码继续遵守现有门禁 |
-| 扩展测试 | Vitest、Playwright | 计划采用 | 状态/组件单测与模拟视频页端到端测试 |
+| 扩展测试 | Vitest、Playwright | 已实现 | 状态/组件单测与模拟视频页端到端测试 |
 | Markdown | 标准 Markdown、YAML frontmatter、双链、Mermaid | 部分实现 | 已实现生成/个人 Markdown 分离和原子发布；Mermaid 属后续阶段 |
 
 ## 三、目标架构
@@ -52,8 +52,8 @@
 交互层
   ├── bili-subtitle 兼容 CLI（已实现）
   ├── bili-study CLI（`extract|auth` 已实现，学习命令计划）
-  ├── loopback Local API（计划）
-  └── Chrome/Edge Side Panel（计划）
+  ├── loopback Local API（已实现）
+  └── Chrome/Edge Side Panel（已实现）
           ↓
 应用编排层
   ├── 现有输入、认证和字幕提取流程
@@ -281,6 +281,7 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-24 | 阶段九工程接入 FastAPI/Uvicorn loopback 服务、Pydantic/OpenAPI、SQLite job、生成 TypeScript client，以及 WXT/React Chrome/Edge 双构建；真实浏览器验收与 CI 待完成。 |
 | 2026-08-24 | 阶段八技术验收完成：OpenAI-compatible DeepSeek 合成短/长字幕真实调用验证 Map/Reduce、完整证据覆盖和 usage；提示契约升级为 v2，SQLite 连接确定性释放，最终 Windows CI 全绿。 |
 | 2026-08-22 | 阶段八工程、离线门禁与 Windows CI 完成：版本化学习领域、SQLite migration/任务/缓存、Provider/Key、证据化两阶段生成和 Markdown 发布接入 `0.2.0.dev1`；真实 Provider 待验收。 |
 | 2026-08-22 | 阶段七技术基线完成：双 CLI、导出端口、异常边界、Apache-2.0、依赖审计、归档和隔离迁移门禁已实现；阶段八/九组件仍为计划采用。 |
