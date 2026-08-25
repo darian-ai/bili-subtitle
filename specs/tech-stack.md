@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | 阶段九 Local API 与扩展工程已接入；真实 Chrome/Edge 脱敏验收与待合并 CI 待执行 |
-| 最后更新 | 2026-08-24 |
+| 当前状态 | 阶段九 Local API 与 Chrome/Edge 扩展已完成验收；阶段十尚未开始 |
+| 最后更新 | 2026-08-25 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
 
@@ -281,6 +281,7 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-25 | 阶段九完成技术验收：Local API、OpenAPI/client、持久 job、WXT/React 双浏览器构建、真实 Chrome/Edge 脱敏闭环及 Windows CI 全部通过。 |
 | 2026-08-24 | 阶段九工程接入 FastAPI/Uvicorn loopback 服务、Pydantic/OpenAPI、SQLite job、生成 TypeScript client，以及 WXT/React Chrome/Edge 双构建；真实浏览器验收与 CI 待完成。 |
 | 2026-08-24 | 阶段八技术验收完成：OpenAI-compatible DeepSeek 合成短/长字幕真实调用验证 Map/Reduce、完整证据覆盖和 usage；提示契约升级为 v2，SQLite 连接确定性释放，最终 Windows CI 全绿。 |
 | 2026-08-22 | 阶段八工程、离线门禁与 Windows CI 完成：版本化学习领域、SQLite migration/任务/缓存、Provider/Key、证据化两阶段生成和 Markdown 发布接入 `0.2.0.dev1`；真实 Provider 待验收。 |

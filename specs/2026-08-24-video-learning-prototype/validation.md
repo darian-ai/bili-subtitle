@@ -42,8 +42,22 @@ Playwright 使用模拟视频页和假 Local API 覆盖：
 
 只记录环境、命令形态、耗时范围和通过/失败；不得记录 BV、标题、账号、字幕、Prompt、响应、笔记或 Key。
 
+### 2026-08-25 验收记录
+
+- Chrome 151 与 Edge 151 均使用仓库构建的 Manifest V3 解压扩展，通过真实 Bilibili 字幕和用户自备 OpenAI-compatible Provider 完成验收。
+- 短/长视频、多 P、人工/AI 字幕、单/多轨道与无字幕场景全部通过；配置、登录、服务、配对、大纲、详情、按章练习、笔记、复述反馈和证据回看闭环全部通过。
+- 预算内字幕保持单次轻量大纲请求，超预算字幕进入 map/reduce；请求进度与耗时处于配置超时边界内。验收者未保留可能关联个人内容的逐次明细。
+- 生成期间导航、可变宽布局、刷新与服务重启恢复通过；未经点击不发起模型请求，不自动暂停，证据跳转误差不超过两秒。
+- 验收结论由用户于 2026-08-25 确认；未记录 BV、标题、账号、字幕、Prompt、响应、笔记、配对码或 Key。
+
+### 自动化与 CI 证据
+
+- 本地：Python 279 项测试通过，合并分支覆盖率 90.12%；许可证 49 项、Ruff、strict Pyright、wheel/sdist、sdist 重建、隔离双命令安装、OpenAPI/client 漂移、Vitest、Playwright 和 Chrome/Edge 双构建全部通过。
+- 待合并实现提交：`c273a8fe4d34bbcc999b52802b8bd82566b36213`。
+- [Windows Quality run 32826785963](https://github.com/darian-ai/bili-subtitle/actions/runs/32826785963) 全绿，覆盖 Python、Extension、E2E、双构建、许可证和发行归档门禁。
+
 ## 可合并与阶段完成
 
-- [`requirements.md`](./requirements.md) 的每项契约均有实现、测试或审计证据，且 [`plan.md`](./plan.md) 的八组任务全部完成。
-- 待合并提交的 Windows CI 成功，并记录提交哈希和 CI 链接。
-- Chrome/Edge 真实验收、秘密扫描、状态恢复和全部 V1 回归通过后，才更新三份上游规格并标记阶段九完成。
+- [`requirements.md`](./requirements.md) 的每项契约均有实现、测试或审计证据，且 [`plan.md`](./plan.md) 的十二组任务全部完成。
+- 待合并实现提交的 Windows CI 已成功，并记录提交哈希和 CI run。
+- Chrome/Edge 真实验收、秘密扫描、状态恢复和全部 V1 回归均已通过，阶段九可以标记完成。

@@ -21,7 +21,7 @@ runner = CliRunner()
 
 
 def test_distribution_and_both_packages_share_one_version_source() -> None:
-    assert bili_study.__version__ == version("bili-study") == "0.2.0.dev1"
+    assert bili_study.__version__ == version("bili-study") == "0.2.0a1"
 
 
 def test_bili_study_exposes_only_implemented_command_tree() -> None:

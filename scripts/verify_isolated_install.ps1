@@ -60,7 +60,7 @@ def main() -> int:
     uv tool install $wheelPath
     if ($LASTEXITCODE -ne 0) { throw "isolated uv tool install failed" }
     $toolList = uv tool list
-    if ($LASTEXITCODE -ne 0 -or ($toolList -join "`n") -notmatch "bili-study v0\.2\.0\.dev1") {
+    if ($LASTEXITCODE -ne 0 -or ($toolList -join "`n") -notmatch "bili-study v0\.2\.0a1") {
         throw "new distribution is not the only installed tool identity"
     }
     if (($toolList -join "`n") -match "bili-subtitle v0\.1\.0") {

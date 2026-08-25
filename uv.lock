@@ -35,7 +35,7 @@ wheels = [
 
 [[package]]
 name = "bili-study"
-version = "0.2.0.dev1"
+version = "0.2.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

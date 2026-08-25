@@ -7,7 +7,7 @@
 | Feature | Video Learning Prototype |
 | 工作分支 | `feature/video-learning-prototype` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 体验优化工程已实现，真实 Chrome/Edge 脱敏验收与待合并 CI 待执行 |
+| 状态 | 已完成；真实 Chrome/Edge 脱敏验收与 Windows CI 均通过 |
 | 日期 | 2026-08-25 |
 
 ## 目标与范围
@@ -70,3 +70,5 @@ OpenAPI 是扩展接口的唯一来源；生成 client 必须由 CI 检查无漂
 - 用户可按文档完成知识库、Provider、登录、服务启动、扩展加载与配对。
 - 真实字幕和模型完成轻量大纲、按需详情、按章练习、笔记、复述反馈及证据回看闭环。
 - 发布边界为 `0.2.0-alpha`，只提供仓库构建和加载已解压扩展。
+
+以上完成条件已于 2026-08-25 全部满足；阶段十能力仍未开始。

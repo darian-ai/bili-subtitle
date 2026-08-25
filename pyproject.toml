@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bili-study"
-version = "0.2.0.dev1"
+version = "0.2.0a1"
 description = "基于 Bilibili 站内字幕的本地优先视频学习 CLI"
 readme = "README.md"
 license = "Apache-2.0"
