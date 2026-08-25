@@ -1,12 +1,17 @@
 export default defineBackground(() => {
-  chrome.action.onClicked.addListener(async (tab) => {
+  chrome.action.onClicked.addListener((tab) => {
     if (tab.id !== undefined) {
-      await chrome.sidePanel.setOptions({
+      const configuring = chrome.sidePanel.setOptions({
         tabId: tab.id,
         path: `sidepanel.html?tabId=${tab.id}`,
         enabled: true,
       });
-      await chrome.sidePanel.open({ tabId: tab.id });
+      // open() must be invoked synchronously inside the click callback. Awaiting
+      // setOptions first causes Chrome to discard the user-activation token.
+      const opening = chrome.sidePanel.open({ tabId: tab.id });
+      Promise.all([configuring, opening]).catch((error: unknown) => {
+        console.error("无法打开 bili-study 侧栏。", error);
+      });
     }
   });
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
