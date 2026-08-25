@@ -67,6 +67,32 @@ def test_discovers_in_order_and_immediately_downloads_raw_bytes() -> None:
     assert SIGNED not in repr(tracks) + repr(body)
 
 
+def test_discovery_sends_complete_identity_without_cache_and_rejects_mismatch() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "aid": 7,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 999,
+                    "subtitle": {"subtitles": []},
+                },
+            },
+        )
+
+    adapter = BilibiliSubtitleAdapter(_client(handler))
+    with pytest.raises(SubtitlePlatformResponseError, match="来源"):
+        adapter.discover(bvid="BV1xx411c7mD", cid=8, aid=7)
+    request = requests[0]
+    assert dict(request.url.params) == {"bvid": "BV1xx411c7mD", "cid": "8", "aid": "7"}
+    assert request.headers["cache-control"] == "no-cache"
+
+
 def test_discovers_current_player_track_schema_without_legacy_is_ai() -> None:
     """播放器当前用 ``type`` 表示 AI 类型，不再保证返回 ``is_ai``。"""
     adapter = BilibiliSubtitleAdapter(

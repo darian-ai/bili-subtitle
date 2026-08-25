@@ -605,6 +605,17 @@
             "title": "Display Name",
             "type": "string"
           },
+          "inspection_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspection Job Id"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"
@@ -668,6 +679,7 @@
           "created_at",
           "source_verification",
           "page_identity_source",
+          "inspection_job_id",
           "cues"
         ],
         "title": "TranscriptResponse",
@@ -751,6 +763,7 @@
             "default": "single_video",
             "enum": [
               "url_page",
+              "video_pod_page",
               "video_pod_item",
               "single_video"
             ],

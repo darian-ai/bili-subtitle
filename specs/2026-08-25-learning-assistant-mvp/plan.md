@@ -10,7 +10,7 @@
 ### 本轮阻断修复
 
 - [x] P10-001：请求保存字幕轨道的语言、显示名和人工/AI 类型；下载时先匹配原始 ID，ID 轮换后仅允许稳定描述唯一命中，多候选返回独立错误码并要求重选。
-- [ ] P10-002：以 `tabId + library + BV/P` 隔离结果；同 BV 多 P 使用 URL P，`video-pod` 多 BV 使用激活 `data-key` 与播放器序号交叉确认；过渡态禁用操作。字幕准备绑定成功 inspect job 并再次解析 CID，迟到结果只回原 owner。代码与自动化已完成，待第 4 次场景真实复验。
+- [ ] P10-002：以 `tabId + library + BV/P` 隔离结果；同 BV 多 P 以 pod 激活序号为 P 并交叉检查 URL，pod 多 BV 使用激活 `data-key` 与播放器序号确认；过渡态禁用操作。字幕准备绑定成功 inspect job，重新解析 AID/CID，并核对无缓存播放器响应中的 AID/BVID/CID；迟到结果只回原 owner。首次真实复验仅通过选集显示与过渡门禁，字幕仍错配，本轮加固后待再次复验。
 - [x] P10-003：证据反馈 Prompt 增加明确 `output_schema`，限制反馈证据不得超出问题范围；在模型调用前持久保存原始回答，失败时保留 `feedback_failed` 状态。
 - [ ] P10-004：禁用全局侧栏回退，只为普通 Bilibili 视频标签页启用独立 panel；未点击或不支持页面隐藏，返回已打开标签页自动恢复。代码与自动化已完成，待真实复验。
 - [ ] P10-005：实现排队/在途取消、迟到结果丢弃、重启中断、显式 retry 与 `retry_of`；核心状态机自动化完成，待真实 Provider 和服务重启复验。
@@ -21,6 +21,7 @@
 - [x] 新增 Transcript 准备与读取 API；客户端不再提交 CID/标题，指南请求只使用保存 revision 与预期 BV/P。
 - [x] workspace 可恢复最近 Transcript；侧栏区分指南绑定版本和新加载版本，新加载 revision 默认显示并可切回指南绑定字幕，生成前显示来源确认面板。
 - [x] 增加 URL/`video-pod`/播放器身份解析、DOM-only 指纹通知、切换冲突门禁，以及 inspect job→轨道→服务端 CID 的强绑定。
+- [x] 区分同 BV 多 P pod 与多 BV pod；播放器轨道请求加入 AID/BVID/CID 和 no-cache，响应身份不完整或不一致时拒绝保存，并在字幕页显示完整来源链。
 - [x] 历史 Transcript 默认标记 `legacy_unverified`；仅完全相同来源与哈希允许升级验证标记。
 - [x] 新增完整字幕页、当前 cue 高亮、跟随暂停/恢复、cue 跳转和原生延迟渲染样式。
 - [x] OpenAPI JSON 与 TypeScript client 从 FastAPI 定义重新生成，未手工编辑生成文件。
@@ -75,4 +76,4 @@
 - [ ] 执行 [`validation.md`](./validation.md) 的全量 Python、Extension、E2E、迁移、安全和 V1 回归。
 - [ ] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部通过后更新 Constitution 并发布 `0.2.0`。
 
-本轮自动化结果：Python 286 项通过、覆盖率 90.16%，Ruff format/lint 与 strict Pyright 通过；Extension OpenAPI/client 已从 API 1.3.0 重新生成且二次生成哈希稳定，TypeScript、ESLint、14 项 Vitest、3 项 Playwright 以及 Chrome/Edge 生产构建通过。第 4 次 Chrome 场景重跑、真实 Provider 在途取消、服务重启、Edge/多轨和其余 v4/发布门禁仍未关闭。
+本轮自动化结果：Python 287 项通过、覆盖率 90.19%，Ruff format/lint 与 strict Pyright 通过；Extension OpenAPI/client 已从 API 1.3.0 重新生成，TypeScript、ESLint、15 项 Vitest、3 项 Playwright 以及 Chrome/Edge 生产构建通过。第 4 次 Chrome 字幕来源场景再次重跑、真实 Provider 在途取消、服务重启、Edge/多轨和其余 v4/发布门禁仍未关闭。

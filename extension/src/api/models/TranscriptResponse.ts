@@ -10,6 +10,7 @@ export type TranscriptResponse = {
     created_at: string;
     cues: Array<TranscriptCueResponse>;
     display_name: string;
+    inspection_job_id: (string | null);
     kind: string;
     language: string;
     page: number;

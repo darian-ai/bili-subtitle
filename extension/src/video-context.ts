@@ -3,7 +3,7 @@ export interface VideoContext {
   bvid?: string;
   page?: number;
   identity_state?: "resolved" | "transitioning" | "ambiguous";
-  identity_evidence?: "url_page" | "video_pod_item" | "single_video";
+  identity_evidence?: "url_page" | "video_pod_page" | "video_pod_item" | "single_video";
   collection_index?: number;
   collection_total?: number;
   currentTimeMs: number;
@@ -14,6 +14,7 @@ export interface VideoPodSnapshot {
   selectedIndex?: number;
   total?: number;
   playerIndex?: number;
+  distinctBvidCount?: number;
 }
 
 export function isSupportedVideoUrl(url: string | undefined): boolean {
@@ -53,6 +54,9 @@ export function resolveVideoContext(
     const indexConflict = pod.selectedIndex !== undefined && pod.playerIndex !== undefined
       && pod.selectedIndex !== pod.playerIndex;
     if (!validPodBvid) return { supported: true, identity_state: "ambiguous", currentTimeMs };
+    const sameBvidPages = pod.distinctBvidCount === 1 && pod.selectedIndex !== undefined;
+    const resolvedPage = sameBvidPages ? pod.selectedIndex! + 1 : rawPage;
+    const urlPageConflict = sameBvidPages && pageValue !== null && rawPage !== resolvedPage;
     if (match[1] !== pod.selectedBvid || indexConflict) {
       return {
         supported: true, identity_state: "transitioning", currentTimeMs,
@@ -60,11 +64,20 @@ export function resolveVideoContext(
         ...(pod.total === undefined ? {} : { collection_total: pod.total }),
       };
     }
+    if (urlPageConflict) {
+      return {
+        supported: true, identity_state: "transitioning", currentTimeMs,
+        page: resolvedPage,
+      };
+    }
     return {
-      supported: true, bvid: pod.selectedBvid, page: rawPage,
-      identity_state: "resolved", identity_evidence: "video_pod_item",
-      ...(pod.selectedIndex === undefined ? {} : { collection_index: pod.selectedIndex + 1 }),
-      ...(pod.total === undefined ? {} : { collection_total: pod.total }), currentTimeMs,
+      supported: true, bvid: pod.selectedBvid, page: resolvedPage,
+      identity_state: "resolved",
+      identity_evidence: sameBvidPages ? "video_pod_page" : "video_pod_item",
+      ...(sameBvidPages || pod.selectedIndex === undefined
+        ? {} : { collection_index: pod.selectedIndex + 1 }),
+      ...(sameBvidPages || pod.total === undefined ? {} : { collection_total: pod.total }),
+      currentTimeMs,
     };
   }
   return {

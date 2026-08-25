@@ -8,6 +8,8 @@ function videoPodSnapshot(): VideoPodSnapshot | undefined {
     || item.querySelector(".active, .simple-base-item.active") !== null);
   if (selectedIndex < 0) return {};
   const selected = items[selectedIndex]!;
+  const distinctBvidCount = new Set(items.map((item) => item.dataset.key)
+    .filter((value): value is string => /^BV[A-Za-z0-9]{10}$/.test(value ?? ""))).size;
   const playerItems = [...document.querySelectorAll<HTMLElement>(".bpx-state-multi-list li, .bpx-state-multi-item")];
   let playerIndex = playerItems.findIndex((item) => item.classList.contains("bpx-state-multi-active-item"));
   if (playerIndex < 0) {
@@ -18,7 +20,7 @@ function videoPodSnapshot(): VideoPodSnapshot | undefined {
   }
   return {
     ...(selected.dataset.key ? { selectedBvid: selected.dataset.key } : {}),
-    selectedIndex, total: items.length,
+    selectedIndex, total: items.length, distinctBvidCount,
     ...(playerIndex < 0 ? {} : { playerIndex }),
   };
 }

@@ -79,7 +79,9 @@ class VideoInspectRequest(StrictModel):
     bvid: str = Field(pattern=r"^BV[A-Za-z0-9]{10}$")
     page: int = Field(ge=1, le=10_000)
     identity_state: Literal["resolved"] = "resolved"
-    identity_evidence: Literal["url_page", "video_pod_item", "single_video"] = "single_video"
+    identity_evidence: Literal["url_page", "video_pod_page", "video_pod_item", "single_video"] = (
+        "single_video"
+    )
     collection_index: int | None = Field(default=None, ge=1, le=100_000)
     collection_total: int | None = Field(default=None, ge=1, le=100_000)
 
@@ -180,6 +182,7 @@ class TranscriptResponse(StrictModel):
     created_at: str
     source_verification: Literal["verified", "legacy_unverified"]
     page_identity_source: str
+    inspection_job_id: str | None
     cues: list[TranscriptCueResponse]
 
 
@@ -288,7 +291,9 @@ def _inspect_job(
         page = selection.pages[0]
         adapter = BilibiliSubtitleAdapter(client)
         try:
-            tracks = adapter.discover(bvid=selection.video.bvid, cid=page.cid)
+            tracks = adapter.discover(
+                bvid=selection.video.bvid, cid=page.cid, aid=selection.video.aid
+            )
         except NoSubtitles:
             tracks = ()
         finally:
@@ -356,7 +361,7 @@ def _download_transcript(raw: dict[str, Any]):
         if raw.get("inspected_cid") is None or int(raw["inspected_cid"]) != page.cid:
             raise InspectionSourceMismatch("重新解析的视频分集与字幕检查结果不一致。")
         adapter = BilibiliSubtitleAdapter(client)
-        tracks = adapter.discover(bvid=selection.video.bvid, cid=page.cid)
+        tracks = adapter.discover(bvid=selection.video.bvid, cid=page.cid, aid=selection.video.aid)
         selected = _select_subtitle_track(tracks, raw)
         body = adapter.download_selected(bvid=selection.video.bvid, cid=page.cid, selected=selected)
     cue_values = tuple(
@@ -373,6 +378,7 @@ def _download_transcript(raw: dict[str, Any]):
         display_name=selected.display_name,
         kind=selected.kind.value,
         cue_values=cue_values,
+        inspection_job_id=str(raw["inspect_job_id"]),
     )
 
 
@@ -394,6 +400,7 @@ def _transcript_response(transcript: TranscriptRevision) -> TranscriptResponse:
             Literal["verified", "legacy_unverified"], transcript.source_verification
         ),
         page_identity_source=transcript.page_identity_source,
+        inspection_job_id=transcript.inspection_job_id,
         cues=[TranscriptCueResponse.model_validate(asdict(cue)) for cue in transcript.cues],
     )
 

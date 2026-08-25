@@ -63,6 +63,7 @@ class TranscriptRevision:
     cues: tuple[TranscriptCue, ...]
     source_verification: str = "verified"
     page_identity_source: str = "server_resolved_bvid_page"
+    inspection_job_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION or not self.revision_id:
@@ -212,6 +213,7 @@ def build_transcript(
     created_at: str | None = None,
     source_verification: str = "verified",
     page_identity_source: str = "server_resolved_bvid_page",
+    inspection_job_id: str | None = None,
 ) -> TranscriptRevision:
     cues = tuple(
         TranscriptCue(f"c{index + 1:06d}", start, end, text)
@@ -235,6 +237,7 @@ def build_transcript(
         cues,
         source_verification,
         page_identity_source,
+        inspection_job_id,
     )
 
 
@@ -290,4 +293,7 @@ def transcript_from_dict(raw: dict[str, Any]) -> TranscriptRevision:
         cues=tuple(TranscriptCue(**cue) for cue in raw["cues"]),
         source_verification=str(raw.get("source_verification") or "legacy_unverified"),
         page_identity_source=str(raw.get("page_identity_source") or "legacy_record"),
+        inspection_job_id=(
+            str(raw["inspection_job_id"]) if raw.get("inspection_job_id") is not None else None
+        ),
     )

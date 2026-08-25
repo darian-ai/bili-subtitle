@@ -35,9 +35,9 @@
 
 ### 多 P 来源强绑定与字幕时间轴
 
-- 普通同 BV 多 P 以 URL 的显式 `p=N` 为分集身份；站内 `video-pod` 多 BV 选集以激活项 `data-key` 的 BV、激活序号及播放器选中序号交叉确认，集合序号只显示为“选集第 N 项”，不得冒充 P。当前仅支持操作当前选中视频，不包含合集批量导入或同步。
+- 普通同 BV 多 P 以 `video-pod` 激活项序号为 P，并与 URL 的显式 `p=N`、播放器选中序号交叉确认；站内 `video-pod` 多 BV 选集以激活项 `data-key` 的 BV 和播放器序号确认，集合序号只显示为“选集第 N 项”，不得冒充 P。当前仅支持操作当前选中视频，不包含合集批量导入或同步。
 - URL、选集 DOM 与播放器状态不一致的切换瞬间标记为 `transitioning/ambiguous`，禁止检查、加载字幕或生成；内容脚本按完整身份指纹通知，不得只依赖 `location.href` 变化。
-- 检查接口只发现规范 BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库、成功检查 job ID 与选定轨道描述，后端校验检查 job 的知识库/BV/P/轨道后再次解析 BV/P→CID，客户端不得提交 CID 或标题。
+- 检查接口只发现规范 AID/BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库、成功检查 job ID 与选定轨道描述，后端校验检查 job 的知识库/BV/P/轨道后再次解析 BV/P→AID/CID。播放器字幕请求必须同时携带 AID/BVID/CID、禁用缓存并核对响应身份；客户端不得提交 AID、CID 或标题。
 - 单轨检查后自动准备字幕；多轨必须由用户明确选择并点击“加载字幕”。指南只接受已保存的 Transcript `revision_id` 与预期 BV/P，来源不匹配稳定失败且不得调用 Provider。
 - workspace 同时返回该 BV/P 最近保存的 Transcript revision，并明确区分空、仅 Transcript 和已有指南；仅 Transcript 不得被误报为“已有学习内容”或阻止首次生成。已有指南保持绑定 revision，新明确加载的 revision 成为字幕页默认版本，并可切回指南绑定字幕，旧指南不被覆盖。
 - 独立字幕页完整显示时间戳和 cue 文本；间隙无高亮，重叠时使用最后开始的 cue。默认跟随播放位置，手动滚动暂停，明确恢复后继续；点击 cue 只跳转起点，不暂停视频。
@@ -109,7 +109,7 @@ POST /api/v1/cache/clear
 - job 状态扩展为 `queued|running|cancel_requested|cancelled|succeeded|failed|interrupted`。
 - SQLite schema 升级到 v4，规范化保存 BV/P 来源键、指南生成元数据、测验尝试、总结、导图、usage、重试关系和取消状态；旧 v3 数据前向迁移并保留备份。
 - `bili-study config provider set` 新增可选 `--input-price-per-million`、`--output-price-per-million` 和 `--currency`；旧配置继续可读。
-- `VideoContext` 携带 `identity_state`、`identity_evidence` 及可选集合序号；Transcript 携带 `source_verification` 与 `page_identity_source`。来源冲突稳定返回 `video_identity_ambiguous`、`page_identity_unresolved` 或 `inspection_source_mismatch`。
+- `VideoContext` 携带 `identity_state`、`identity_evidence` 及可选集合序号；Transcript 携带 `source_verification`、`page_identity_source` 与 `inspection_job_id`，字幕页展示 BV/P/CID/inspect 来源链。来源冲突稳定返回 `video_identity_ambiguous`、`page_identity_unresolved` 或 `inspection_source_mismatch`。
 
 ## 明确不在范围内
 

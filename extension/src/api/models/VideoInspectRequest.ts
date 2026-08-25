@@ -14,6 +14,7 @@ export type VideoInspectRequest = {
 export namespace VideoInspectRequest {
     export enum identity_evidence {
         URL_PAGE = 'url_page',
+        VIDEO_POD_PAGE = 'video_pod_page',
         VIDEO_POD_ITEM = 'video_pod_item',
         SINGLE_VIDEO = 'single_video',
     }

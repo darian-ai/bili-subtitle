@@ -725,8 +725,10 @@ def test_platform_inspect_and_transcript_download_adapters(
         def __init__(self, client: object) -> None:
             del client
 
-        def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
-            assert bvid == "BV1xx411c7mD" and cid == 55
+        def discover(
+            self, *, bvid: str, cid: int, aid: int | None = None
+        ) -> tuple[SubtitleTrack, ...]:
+            assert bvid == "BV1xx411c7mD" and cid == 55 and aid == 1
             return (track,)
 
         def discard_pending(self, *, bvid: str, cid: int) -> None:
@@ -759,6 +761,7 @@ def test_platform_inspect_and_transcript_download_adapters(
             "bvid": "BV1xx411c7mD",
             "page": 2,
             "inspected_cid": 55,
+            "inspect_job_id": "inspect-1",
             "title": "标题",
             "track_id": "2080600637229272576",
         }
@@ -773,6 +776,7 @@ def test_platform_inspect_and_transcript_download_adapters(
             "bvid": "BV1xx411c7mD",
             "page": 2,
             "inspected_cid": 55,
+            "inspect_job_id": "inspect-1",
             "track_id": "2080600637229272576",
             "track_language": "zh-CN",
             "track_display_name": "中文",
@@ -791,6 +795,7 @@ def test_platform_inspect_and_transcript_download_adapters(
                 "bvid": "BV1xx411c7mD",
                 "page": 2,
                 "inspected_cid": 55,
+                "inspect_job_id": "inspect-1",
                 "title": "标题",
                 "track_id": 999,
             }

@@ -32,9 +32,10 @@ interface SavedNote {
 }
 interface TranscriptCue { cue_id: string; start_ms: number; end_ms: number; text: string }
 interface Transcript {
-  revision_id: string; bvid: string; page: number; title: string; track_id: string | null;
+  revision_id: string; bvid: string; page: number; cid: number; title: string; track_id: string | null;
   language: string; display_name: string; kind: string; content_sha256: string;
   source_verification: "verified" | "legacy_unverified"; page_identity_source: string;
+  inspection_job_id?: string | null;
   cues: TranscriptCue[];
 }
 interface ReflectionAttempt {
@@ -489,6 +490,8 @@ export function App({ tabId }: { tabId: number }) {
         library, bvid: expectedBvid, page: expectedPage,
         identity_state: "resolved", identity_evidence: (video.identity_evidence === "url_page"
           ? VideoInspectRequest.identity_evidence.URL_PAGE
+          : video.identity_evidence === "video_pod_page"
+            ? VideoInspectRequest.identity_evidence.VIDEO_POD_PAGE
           : video.identity_evidence === "video_pod_item"
             ? VideoInspectRequest.identity_evidence.VIDEO_POD_ITEM
             : VideoInspectRequest.identity_evidence.SINGLE_VIDEO),
@@ -674,6 +677,8 @@ export function App({ tabId }: { tabId: number }) {
     [guide, video.currentTimeMs],
   );
   const displayedTranscript = showGuideTranscript ? transcript : (preparedTranscript ?? transcript);
+  const displayedSourceAttested = displayedTranscript?.source_verification === "verified"
+    && Boolean(displayedTranscript.inspection_job_id);
   const currentCue = useMemo(
     () => activeCue(displayedTranscript?.cues ?? [], video.currentTimeMs),
     [displayedTranscript, video.currentTimeMs],
@@ -784,7 +789,11 @@ export function App({ tabId }: { tabId: number }) {
           <button className={showGuideTranscript ? "compact" : "quiet compact"} onClick={() => setShowGuideTranscript(true)}>指南绑定字幕</button>
         </div>}
         <p className="muted-text">P{displayedTranscript.page} · {displayedTranscript.title} · {displayedTranscript.display_name} · revision <code>{displayedTranscript.revision_id}</code></p>
-        {displayedTranscript.source_verification === "legacy_unverified" && <p className="warning">历史字幕来源尚未重新验证。</p>}
+        <p className="muted-text">来源：<code>{displayedTranscript.bvid}</code> / P{displayedTranscript.page} / CID {displayedTranscript.cid}
+          {displayedTranscript.inspection_job_id && <> / inspect <code>{displayedTranscript.inspection_job_id}</code></>}
+          {` / ${displayedSourceAttested ? "服务端已验证" : "来源链不完整"}`}</p>
+        <p className="muted-text">内容 SHA-256：<code>{displayedTranscript.content_sha256}</code></p>
+        {!displayedSourceAttested && <p className="warning">这份历史字幕缺少完整来源证明，请重新检查并加载字幕后再使用。</p>}
         <ol ref={transcriptList} className="transcript-list" aria-label="完整字幕时间轴" onScroll={() => {
           if (!automaticScroll.current) setFollowTranscript(false);
         }}>{displayedTranscript.cues.map((cue) => <li key={cue.cue_id} data-cue-id={cue.cue_id} className={cue.cue_id === currentCue?.cue_id ? "current" : ""}>

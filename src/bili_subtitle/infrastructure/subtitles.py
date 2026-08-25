@@ -36,9 +36,9 @@ class BilibiliSubtitleAdapter:
         self._client = client
         self._pending: dict[tuple[str, int, SubtitleTrack], _DiscoveredTrack] = {}
 
-    def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
+    def discover(self, *, bvid: str, cid: int, aid: int | None = None) -> tuple[SubtitleTrack, ...]:
         self.discard_pending(bvid=bvid, cid=cid)
-        discovered = self._discover_private(bvid=bvid, cid=cid)
+        discovered = self._discover_private(bvid=bvid, cid=cid, aid=aid)
         # Signed addresses stay private to this adapter and are consumed once by
         # download_selected.  Reusing the player response avoids a second request
         # whose short-lived address set can legitimately differ from discovery.
@@ -64,8 +64,13 @@ class BilibiliSubtitleAdapter:
             key: value for key, value in self._pending.items() if key[:2] != (bvid, cid)
         }
 
-    def _discover_private(self, *, bvid: str, cid: int) -> tuple[_DiscoveredTrack, ...]:
-        response = self._get(_PLAYER_API, params={"bvid": bvid, "cid": cid})
+    def _discover_private(
+        self, *, bvid: str, cid: int, aid: int | None
+    ) -> tuple[_DiscoveredTrack, ...]:
+        params: dict[str, str | int] = {"bvid": bvid, "cid": cid}
+        if aid is not None:
+            params["aid"] = aid
+        response = self._get(_PLAYER_API, params=params, no_cache=True)
         payload = _response_payload(response)
         code = payload.get("code")
         if code in {-101, -111}:
@@ -77,6 +82,12 @@ class BilibiliSubtitleAdapter:
         data = payload.get("data")
         if not isinstance(data, Mapping):
             raise SubtitlePlatformResponseError("字幕轨道响应结构异常。")
+        typed_data = cast(Mapping[str, object], data)
+        identities = {"aid": aid, "bvid": bvid, "cid": cid}
+        if aid is not None and any(
+            typed_data.get(key) != expected for key, expected in identities.items()
+        ):
+            raise SubtitlePlatformResponseError("字幕轨道响应来源与请求视频不一致。")
         subtitle = cast(Mapping[object, object], data).get("subtitle")
         if subtitle is None:
             raise NoSubtitles("该分集没有可见字幕。")
@@ -89,9 +100,16 @@ class BilibiliSubtitleAdapter:
             raise NoSubtitles("该分集没有可见字幕。")
         return tuple(_parse_track(item) for item in cast(list[object], raw_tracks))
 
-    def _get(self, url: str, *, params: dict[str, str | int] | None = None) -> httpx.Response:
+    def _get(
+        self,
+        url: str,
+        *,
+        params: dict[str, str | int] | None = None,
+        no_cache: bool = False,
+    ) -> httpx.Response:
         try:
-            response = self._client.get(url, params=params)
+            headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"} if no_cache else None
+            response = self._client.get(url, params=params, headers=headers)
         except (httpx.TimeoutException, httpx.NetworkError):
             raise SubtitleNetworkError("字幕网络访问失败。") from None
         if response.status_code == 401:
