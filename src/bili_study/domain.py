@@ -16,6 +16,10 @@ class DomainError(ValueError):
     """A stable, user-correctable learning-domain error."""
 
 
+class SubtitleTrackUnavailable(DomainError):
+    """The subtitle track selected during inspection is no longer available."""
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptCue:
     cue_id: str

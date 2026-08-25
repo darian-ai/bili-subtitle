@@ -60,13 +60,13 @@ def main() -> int:
     uv tool install $wheelPath
     if ($LASTEXITCODE -ne 0) { throw "isolated uv tool install failed" }
     $toolList = uv tool list
-    if ($LASTEXITCODE -ne 0 -or ($toolList -join "`n") -notmatch "bili-study v0\.2\.0\.dev1") {
+    if ($LASTEXITCODE -ne 0 -or ($toolList -join "`n") -notmatch "bili-study v0\.2\.0a1") {
         throw "new distribution is not the only installed tool identity"
     }
     if (($toolList -join "`n") -match "bili-subtitle v0\.1\.0") {
         throw "legacy tool identity remained after migration"
     }
-    $command = "Set-Location -LiteralPath '$($workDir.Replace("'", "''"))'; `$env:PATH='$($binDir.Replace("'", "''"));' + [IO.Path]::PathSeparator + `$env:PATH; bili-study --help; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; bili-subtitle --help; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; bili-study serve 2>`$null; if (`$LASTEXITCODE -ne 2) { exit 9 }; bili-subtitle not-a-video 2>`$null; if (`$LASTEXITCODE -ne 2) { exit 9 }; exit 0"
+    $command = "Set-Location -LiteralPath '$($workDir.Replace("'", "''"))'; `$env:PATH='$($binDir.Replace("'", "''"));' + [IO.Path]::PathSeparator + `$env:PATH; bili-study --help; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; bili-subtitle --help; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; bili-study doctor 2>`$null; if (`$LASTEXITCODE -ne 2) { exit 9 }; bili-subtitle not-a-video 2>`$null; if (`$LASTEXITCODE -ne 2) { exit 9 }; exit 0"
     & powershell -NoProfile -NonInteractive -Command $command
     if ($LASTEXITCODE -ne 0) { throw "fresh PowerShell invocation failed" }
 }

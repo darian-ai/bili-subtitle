@@ -10,7 +10,7 @@ permissions:
 jobs:
   checks:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -37,4 +37,31 @@ jobs:
         run: uv run python scripts/verify_release.py dist --rebuild-sdist
       - name: Verify isolated uv tool install
         shell: pwsh
-        run: ./scripts/verify_isolated_install.ps1 -Wheel ./dist/bili_study-0.2.0.dev1-py3-none-any.whl
+        run: ./scripts/verify_isolated_install.ps1 -Wheel ./dist/bili_study-0.2.0a1-py3-none-any.whl
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci --no-audit --no-fund
+      - name: Check generated Local API client
+        working-directory: extension
+        run: npm run api:check
+      - name: Lint and typecheck extension
+        working-directory: extension
+        run: npm run lint && npm run typecheck
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Install Playwright Chromium
+        working-directory: extension
+        run: npx playwright install chromium
+      - name: Run extension E2E
+        working-directory: extension
+        run: npm run test:e2e
+      - name: Build Chrome and Edge extensions
+        working-directory: extension
+        run: npm run build

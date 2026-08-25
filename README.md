@@ -1,6 +1,6 @@
 # bili-study
 
-当前 `0.2.0.dev1` 是阶段八开发版本：除字幕提取与 Bilibili 认证外，已经提供命名知识库、Transcript 导入、用户自备 OpenAI-compatible Provider、证据化学习指南、按需章节详情和个人 Markdown 笔记。Local API 与浏览器扩展仍未实现。
+当前源码是已通过阶段九验收的 `0.2.0-alpha` 浏览器学习原型：除字幕提取与阶段八学习后端外，已经提供只监听 loopback 的 Local API，以及由 WXT、TypeScript、React 构建的 Chrome/Edge Manifest V3 侧栏。当前只提供本地安装和加载已解压扩展，不进入扩展商店。
 
 新安装使用 `uv tool install bili-study`，提供 `bili-study extract <视频标识或URL>` 与 `bili-study auth login|status|clear`。原有 `bili-subtitle` 命令继续兼容并复用原 Credential Manager 登录状态。
 
@@ -56,7 +56,7 @@ uv python install 3.12
 
 ```powershell
 uv build
-uv tool install .\dist\bili_study-0.2.0.dev1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0a1-py3-none-any.whl
 ```
 
 安装完成后验证命令：
@@ -78,7 +78,7 @@ uv tool update-shell
 ```powershell
 git pull
 uv build
-uv tool install .\dist\bili_study-0.2.0.dev1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0a1-py3-none-any.whl
 ```
 
 卸载：
@@ -110,7 +110,7 @@ bili-subtitle auth clear
 
 `auth clear` 只删除本机保存的凭据，不会调用 Bilibili 的账号退出接口。
 
-### 阶段八学习后端
+### 学习后端
 
 先创建命名知识库，并配置用户自备的 OpenAI-compatible Provider。API Key 通过隐藏输入读取，只保存到 Windows Credential Manager：
 
@@ -140,7 +140,52 @@ bili-study note add --library my-library REVISION_ID 120000 "这里需要复习"
 bili-study note list --library my-library REVISION_ID
 ```
 
-当前阶段没有 `serve`、浏览器插件、Embedding、跨视频问答、复习或测验命令。
+Embedding、跨视频问答、复习和测验仍不在本原型范围内。
+
+### Chrome/Edge 学习侧栏
+
+先完成知识库、Provider 和 Bilibili 登录配置，再启动 Local API。服务只监听 `127.0.0.1`，不提供局域网监听或关闭认证的参数：
+
+```powershell
+bili-study auth login
+bili-study serve --port 8765
+```
+
+在另一个 PowerShell 中构建扩展：
+
+```powershell
+Set-Location .\extension
+npm ci
+npm run api:check
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`，启用“开发者模式”并选择“加载已解压的扩展”：
+
+- Chrome 选择 `extension\.output\chrome-mv3`。
+- Edge 选择 `extension\.output\edge-mv3`。
+
+点击工具栏中的 bili-study 图标打开侧栏。首次连接时，在另一个 PowerShell 生成五分钟有效、单次使用的配对码：
+
+```powershell
+bili-study plugin pair
+```
+
+把配对码输入侧栏。Bearer token 只保存在扩展本地存储并绑定当前扩展 Origin；本地服务重启后 token 会失效，需要重新配对。扩展不保存或读取 Bilibili Cookie、Provider API Key、二维码密钥或字幕签名 URL。
+
+打开普通 Bilibili 视频页后，依次选择知识库、填写已配置的 Provider 名称、检查字幕轨道，再主动点击“创建轻量学习大纲”。可容纳的字幕只调用一次模型，超预算内容才使用 Map/Reduce；详情和按章练习仍只在点击后生成。侧栏通过“大纲 / 练习 / 笔记”多页面导航展示内容，正文默认为 18px，并随用户拖动后的浏览器侧栏宽度响应，不会自动暂停视频、弹题或上传字幕。
+
+个人时间戳笔记写入知识库的 `notes\`，AI 指南写入 `generated\videos\`；重新生成 AI 内容不会覆盖个人 Markdown。任务、指南和笔记状态保存在本机 SQLite，服务重启后会恢复未完成任务。
+
+开发环境首次执行 Playwright 需要下载隔离测试浏览器：
+
+```powershell
+npx playwright install chromium
+npm run test:e2e
+```
 
 ### 2. 进入希望保存字幕的目录
 
@@ -390,7 +435,19 @@ uv run ruff format --check .
 uv run pyright
 uv build
 uv run python scripts/verify_release.py dist --rebuild-sdist
-.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0.dev1-py3-none-any.whl
+.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0a1-py3-none-any.whl
+```
+
+扩展门禁在 `extension` 目录运行：
+
+```powershell
+npm ci
+npm run api:check
+npm run lint
+npm run typecheck
+npm test
+npm run test:e2e
+npm run build
 ```
 
 默认自动化测试不访问真实 Bilibili 网络，也不读取本机真实凭据。

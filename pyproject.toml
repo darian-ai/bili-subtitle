@@ -4,17 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bili-study"
-version = "0.2.0.dev1"
+version = "0.2.0a1"
 description = "基于 Bilibili 站内字幕的本地优先视频学习 CLI"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.116,<1",
     "httpx>=0.28",
     "keyring>=25.6",
     "qrcode>=8.2",
     "rich>=14.0",
     "typer>=0.16",
+    "uvicorn>=0.35,<1",
 ]
 
 [project.scripts]
@@ -26,6 +28,7 @@ dev = [
     "pyright>=1.1.403",
     "pytest>=8.4",
     "pytest-cov>=6.2",
+    "pytest-timeout>=2.4",
     "respx>=0.22",
     "ruff>=0.12",
 ]

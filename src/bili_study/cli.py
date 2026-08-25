@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -55,6 +56,7 @@ transcript_app = typer.Typer(help="导入和查看版本化 Transcript。", no_a
 guide_app = typer.Typer(help="生成和查看证据化学习指南。", no_args_is_help=True)
 chapter_app = typer.Typer(help="按需生成章节详情。", no_args_is_help=True)
 note_app = typer.Typer(help="管理不可覆盖的个人 Markdown 笔记。", no_args_is_help=True)
+plugin_app = typer.Typer(help="管理浏览器扩展配对。", no_args_is_help=True)
 app.add_typer(library_app, name="library")
 config_app.add_typer(provider_app, name="provider")
 app.add_typer(config_app, name="config")
@@ -62,6 +64,7 @@ app.add_typer(transcript_app, name="transcript")
 app.add_typer(guide_app, name="guide")
 app.add_typer(chapter_app, name="chapter")
 app.add_typer(note_app, name="note")
+app.add_typer(plugin_app, name="plugin")
 
 
 @app.callback(invoke_without_command=True)
@@ -343,6 +346,46 @@ def note_list(library_name: Annotated[str, typer.Option("--library")], revision_
         return
     for note in notes:
         typer.echo(f"{note.note_id}\t{note.timestamp_ms}\t{note.note_type}\t{note.body}")
+
+
+@plugin_app.command("pair")
+def plugin_pair() -> None:
+    """生成五分钟有效、单次使用的本机扩展配对码。"""
+    from bili_study.security import PairingStore
+
+    try:
+        code, expires = PairingStore(_paths()).create()
+    except StorageError as exc:
+        _known_error(exc)
+        return
+    typer.echo(f"配对码：{code}")
+    typer.echo(f"有效期至：{expires.astimezone().isoformat(timespec='seconds')}")
+
+
+@app.command("serve")
+def serve(
+    port: Annotated[int, typer.Option(min=1, max=65535, help="loopback Local API 端口。")] = 8765,
+) -> None:
+    """只在 127.0.0.1 启动已认证的 Local API。"""
+    import uvicorn
+
+    from bili_study.api import create_app
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", port))
+    except OSError:
+        probe.close()
+        _known_error(StorageError("Local API 端口已被占用。"))
+        return
+    probe.close()
+    uvicorn.run(
+        create_app(allowed_hosts={"127.0.0.1", "localhost"}),
+        host="127.0.0.1",
+        port=port,
+        access_log=False,
+        log_level="warning",
+    )
 
 
 def main() -> int:

@@ -224,19 +224,19 @@ def test_guide_and_chapter_cli_generate_show_and_clear(
         del args, kwargs
         instances += 1
         responses = (
-            [json.dumps({"chapters": []}), json.dumps(guide)]
+            [json.dumps(guide)]
             if instances == 1
             else [
                 json.dumps(
                     {
                         "summary": "详情",
-                        "key_points": [],
-                        "terms": [],
-                        "easy_to_miss": [],
-                        "evidence": {
+                        "summary_evidence": {
                             "start_cue_id": "c000001",
                             "end_cue_id": "c000001",
                         },
+                        "key_points": [],
+                        "terms": [],
+                        "easy_to_miss": [],
                     }
                 )
             ]
@@ -286,9 +286,10 @@ def test_cli_known_errors_are_stable(app_data: tuple[Path, Path], tmp_path: Path
     assert runner.invoke(app, ["guide", "show", "--library", "main", "missing"]).exit_code == 2
 
 
-def test_future_commands_remain_unregistered() -> None:
+def test_stage_nine_commands_are_registered() -> None:
     help_result = runner.invoke(app, ["--help"])
-    for command in ("library", "config", "transcript", "guide", "chapter", "note"):
+    stage_nine = ("library", "config", "transcript", "guide", "chapter", "note", "serve", "plugin")
+    for command in stage_nine:
         assert command in help_result.output
-    for unavailable in ("serve", "plugin", "embedding", "review", "quiz"):
+    for unavailable in ("embedding", "review", "quiz"):
         assert runner.invoke(app, [unavailable]).exit_code == 2

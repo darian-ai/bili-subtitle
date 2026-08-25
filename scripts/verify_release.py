@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 PROJECT = "bili_study"
-VERSION = "0.2.0.dev1"
+VERSION = "0.2.0a1"
 FORBIDDEN_PARTS = {
     ".coverage",
     ".git",
@@ -27,11 +27,13 @@ FORBIDDEN_PARTS = {
 FORBIDDEN_SUFFIXES = {".json.tmp", ".srt", ".tmp"}
 FORBIDDEN_TOP_LEVEL = {".agents", ".github", "tests"}
 EXPECTED_REQUIRES = {
+    "fastapi<1,>=0.116",
     "httpx>=0.28",
     "keyring>=25.6",
     "qrcode>=8.2",
     "rich>=14.0",
     "typer>=0.16",
+    "uvicorn<1,>=0.35",
 }
 SECRET_MARKERS = (
     b"SESS" + b"DATA=",

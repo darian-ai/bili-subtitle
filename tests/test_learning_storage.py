@@ -15,6 +15,7 @@ from bili_study.storage import (
     library_database,
     publish_generated,
     publish_note,
+    publish_reflection,
 )
 
 
@@ -84,6 +85,15 @@ def test_repository_roundtrip_cache_and_personal_note(tmp_path: Path) -> None:
         publish_note(library, note)
     generated = publish_generated(library, "guide:1", "# guide\n")
     assert generated.name == "guide_1.md"
+    reflection = publish_reflection(
+        library,
+        reflection_id="reflection-1",
+        revision_id=revision.revision_id,
+        question_id="q1",
+        response="我的复述",
+    )
+    assert "owner: user" in reflection.read_text(encoding="utf-8")
+    assert "我的复述" in reflection.read_text(encoding="utf-8")
     task_id = repository.start_task("guide", "start")
     assert repository.task_status(task_id) == ("running", None)
     repository.finish_task(task_id, "succeeded", None, "end")
@@ -105,6 +115,22 @@ def test_repository_migration_backup_and_corruption(tmp_path: Path) -> None:
         connection.execute("PRAGMA user_version = 0")
     StudyRepository(database)
     assert database.with_suffix(".sqlite3.bak").exists()
+
+    version_two = tmp_path / "version-two.sqlite3"
+    with sqlite3.connect(version_two) as connection:
+        connection.execute(
+            "CREATE TABLE api_jobs (job_id TEXT PRIMARY KEY, kind TEXT, status TEXT, "
+            "request TEXT, result TEXT, error_code TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        connection.execute("PRAGMA user_version = 2")
+    StudyRepository(version_two)
+    with sqlite3.connect(version_two) as connection:
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(api_jobs)")}
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        practice_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chapter_practices'"
+        ).fetchone()
+    assert version == 3 and "progress" in columns and practice_table is not None
 
     corrupt = tmp_path / "broken.sqlite3"
     corrupt.write_bytes(b"not sqlite")
