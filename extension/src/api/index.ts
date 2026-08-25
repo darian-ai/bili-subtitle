@@ -8,8 +8,11 @@ export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
 export type { ChapterDetailRequest } from './models/ChapterDetailRequest';
+export type { ChapterPracticeRequest } from './models/ChapterPracticeRequest';
 export type { HTTPValidationError } from './models/HTTPValidationError';
 export type { JobAccepted } from './models/JobAccepted';
+export type { JobProgressResponse } from './models/JobProgressResponse';
+export { JobResponse } from './models/JobResponse';
 export { NoteRequest } from './models/NoteRequest';
 export type { PairRequest } from './models/PairRequest';
 export type { PairResponse } from './models/PairResponse';

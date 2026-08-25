@@ -142,7 +142,7 @@ def test_api_pair_auth_cors_schema_and_personal_note(
     client, headers = paired_client(paths)
     with client:
         health = client.get("/api/v1/health")
-        assert health.json() == {"status": "ok", "api_version": "1.0.0"}
+        assert health.json() == {"status": "ok", "api_version": "1.1.0"}
         assert client.get("/api/v1/libraries", headers={"Origin": ORIGIN}).status_code == 401
         libraries = client.get("/api/v1/libraries", headers=headers)
         assert libraries.status_code == 200 and libraries.json()["libraries"][0]["name"] == "main"
@@ -236,7 +236,7 @@ def test_api_rejects_host_origin_pair_reuse_and_large_request(
 
 def test_openapi_is_versioned_and_declares_bearer_security(paths: AppPaths) -> None:
     schema = create_app(paths=paths).openapi()
-    assert schema["info"]["version"] == "1.0.0"
+    assert schema["info"]["version"] == "1.1.0"
     assert "/api/v1/reflections" in schema["paths"]
     assert schema["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
     assert schema["paths"]["/api/v1/pair"]["post"].get("security") is None
@@ -271,9 +271,9 @@ def test_persistent_worker_serializes_classifies_and_recovers(paths: AppPaths) -
     repository = StudyRepository(paths.state_dir / "jobs.sqlite3")
     order: list[int] = []
     worker = PersistentJobWorker(repository)
-    worker.register("ok", lambda raw: order.append(int(raw["number"])) or {"ok": True})
+    worker.register("ok", lambda raw, _progress: order.append(int(raw["number"])) or {"ok": True})
 
-    def fail(_: dict[str, object]) -> dict[str, object]:
+    def fail(_: dict[str, object], _progress: object) -> dict[str, object]:
         raise AuthenticationRequired("secret-free")
 
     worker.register("fail", fail)
@@ -288,6 +288,7 @@ def test_persistent_worker_serializes_classifies_and_recovers(paths: AppPaths) -
     worker.stop()
     assert order == [1, 2]
     assert repository.job(first)["status"] == repository.job(second)["status"] == "succeeded"
+    assert repository.job(second)["progress"] == {"phase": "completed", "percent": 100}
     assert repository.job(failed)["error_code"] == "bilibili_authentication_required"
     with pytest.raises(StorageError):
         worker.submit("missing", {})
@@ -296,6 +297,20 @@ def test_persistent_worker_serializes_classifies_and_recovers(paths: AppPaths) -
     assert repository.claim_job(interrupted, "running")
     assert repository.recover_jobs("restart") == (interrupted,)
     assert repository.job(interrupted)["error_code"] == "service_restarted"
+
+
+def test_job_progress_is_persisted_and_monotonic(paths: AppPaths) -> None:
+    repository = StudyRepository(paths.state_dir / "progress.sqlite3")
+    job_id = repository.create_job("guide", {}, "created")
+    assert repository.job(job_id)["progress"] == {"phase": "queued", "percent": 0}
+    assert repository.claim_job(job_id, "started")
+    repository.update_job_progress(job_id, "generating_outline", 35, "running")
+    assert repository.job(job_id)["progress"] == {
+        "phase": "generating_outline",
+        "percent": 35,
+    }
+    with pytest.raises(StorageError, match="倒退"):
+        repository.update_job_progress(job_id, "fetching_transcript", 10, "invalid")
 
 
 def test_stable_error_codes_do_not_expose_exception_text() -> None:
@@ -373,14 +388,29 @@ def test_async_api_routes_and_guide_read_model(
     jobs = StudyRepository(paths.state_dir / "test-api-jobs.sqlite3")
     worker = PersistentJobWorker(jobs)
     monkeypatch.setattr(
-        api_module, "_inspect_job", lambda _paths, raw: {"bvid": raw["bvid"], "tracks": []}
-    )
-    monkeypatch.setattr(api_module, "_guide_job", lambda _paths, _raw: {"guide_id": guide.guide_id})
-    monkeypatch.setattr(
-        api_module, "_detail_job", lambda _paths, raw: {"chapter_id": raw["chapter_id"]}
+        api_module,
+        "_inspect_job",
+        lambda _paths, raw, _progress: {"bvid": raw["bvid"], "tracks": []},
     )
     monkeypatch.setattr(
-        api_module, "_reflection_job", lambda _paths, raw: {"question_id": raw["question_id"]}
+        api_module,
+        "_guide_job",
+        lambda _paths, _raw, _progress: {"guide_id": guide.guide_id},
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_detail_job",
+        lambda _paths, raw, _progress: {"chapter_id": raw["chapter_id"]},
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_practice_job",
+        lambda _paths, raw, _progress: {"chapter_id": raw["chapter_id"]},
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_reflection_job",
+        lambda _paths, raw, _progress: {"question_id": raw["question_id"]},
     )
     pairing = PairingStore(paths)
     code, _ = pairing.create()
@@ -417,6 +447,12 @@ def test_async_api_routes_and_guide_read_model(
             json={"library": "main", "provider": "test"},
         )
         assert _wait_api_job(client, detail.json()["job_id"], headers)["status"] == "succeeded"
+        practice = client.post(
+            "/api/v1/study-guides/guide-1/chapters/ch001/practice",
+            headers=headers,
+            json={"library": "main", "provider": "test"},
+        )
+        assert _wait_api_job(client, practice.json()["job_id"], headers)["status"] == "succeeded"
         reflection = client.post(
             "/api/v1/reflections",
             headers=headers,
@@ -594,9 +630,14 @@ def test_guide_job_reuses_stage_eight_generation(
             del chat, repository
 
         def generate(
-            self, value: object, provider: object, *, regenerate: bool
+            self,
+            value: object,
+            provider: object,
+            *,
+            regenerate: bool,
+            progress: object,
         ) -> GenerationResult:
-            assert value == transcript and provider == config and regenerate
+            assert value == transcript and provider == config and regenerate and progress
             return result
 
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda *_args: ChatContext())
@@ -671,9 +712,9 @@ def test_detail_job_persists_generated_content(
             del chat, repo
 
         def generate_chapter_detail(
-            self, value: object, chapter: Chapter
+            self, value: object, chapter: Chapter, *, progress: object
         ) -> tuple[dict[str, object], GenerationMetrics]:
-            assert value == transcript and chapter.chapter_id == "ch001"
+            assert value == transcript and chapter.chapter_id == "ch001" and progress
             return {"summary": "详情"}, GenerationMetrics(1, None, None, None, 1, False)
 
     monkeypatch.setattr(api_module, "GuideGenerator", DetailGenerator)
@@ -683,3 +724,143 @@ def test_detail_job_persists_generated_content(
     )
     assert result["detail"] == {"summary": "详情"}
     assert repository.chapter_details("guide-detail") == {"ch001": {"summary": "详情"}}
+
+
+def test_practice_job_persists_questions(paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    library = LibraryRegistry(paths).create("main", paths.config_dir / "vault-practice")
+    repository = StudyRepository(library_database(paths, library))
+    transcript = build_transcript(
+        bvid="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="标题",
+        track_id=1,
+        language="zh-CN",
+        display_name="中文",
+        kind="human",
+        cue_values=((0, 1000, "内容"),),
+    )
+    repository.save_transcript(transcript)
+    evidence = EvidenceRef(transcript.revision_id, "c000001", "c000001")
+    guide = StudyGuide(
+        "guide-practice",
+        1,
+        transcript.revision_id,
+        "fp-practice",
+        "zh-CN",
+        ("目标",),
+        (Chapter("ch001", "章节", "总结", evidence),),
+        now_iso(),
+    )
+    repository.save_guide(guide, guide_to_payload(guide))
+    config = ProviderConfig("test", "https://model.example/v1", "model", "zh-CN", 1000)
+    monkeypatch.setattr(api_module.ProviderConfigStore, "get", lambda _self, _name: config)
+    monkeypatch.setattr(api_module.ProviderSecretStore, "get", lambda _self, _name: "secret")
+
+    class ChatContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+    practice: dict[str, object] = {
+        "questions": [
+            {
+                "question_id": "q-ch001-01",
+                "text": "核心是什么？",
+                "evidence": {"start_cue_id": "c000001", "end_cue_id": "c000001"},
+            }
+        ]
+    }
+
+    class Generator:
+        def __init__(self, chat: object, repo: object) -> None:
+            del chat, repo
+
+        def generate_chapter_practice(
+            self, value: object, chapter: Chapter, *, progress: object
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            assert value == transcript and chapter.chapter_id == "ch001" and progress
+            return practice, GenerationMetrics(1, None, None, None, 1, False)
+
+        def generate_reflection(
+            self, value: object, question: GuidingQuestion, response: str
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            assert value == transcript and question.question_id == "q-ch001-01"
+            assert response == "我的回答"
+            return {
+                "covered": ["要点"],
+                "missing": [],
+                "misconceptions": [],
+                "evidence": [{"start_cue_id": "c000001", "end_cue_id": "c000001"}],
+            }, GenerationMetrics(1, None, None, None, 1, False)
+
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda *_args: ChatContext())
+    monkeypatch.setattr(api_module, "GuideGenerator", Generator)
+    result = api_module._practice_job(
+        paths,
+        {
+            "library": "main",
+            "provider": "test",
+            "guide_id": guide.guide_id,
+            "chapter_id": "ch001",
+        },
+    )
+    assert result["chapter_id"] == "ch001"
+    assert repository.chapter_practices(guide.guide_id) == {"ch001": practice}
+    reflection = api_module._reflection_job(
+        paths,
+        {
+            "library": "main",
+            "provider": "test",
+            "guide_id": guide.guide_id,
+            "question_id": "q-ch001-01",
+            "response": "我的回答",
+        },
+    )
+    assert reflection["feedback"] == {
+        "covered": ["要点"],
+        "missing": [],
+        "misconceptions": [],
+        "evidence": [{"start_cue_id": "c000001", "end_cue_id": "c000001"}],
+    }
+    assert any((library.path / "reviews").glob("*.md"))
+
+
+def test_evidence_times_are_added_recursively() -> None:
+    transcript = build_transcript(
+        bvid="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="标题",
+        track_id=1,
+        language="zh-CN",
+        display_name="中文",
+        kind="human",
+        cue_values=((0, 1000, "内容"),),
+    )
+    enriched = api_module._with_evidence_times(
+        {
+            "items": [
+                {
+                    "text": "要点",
+                    "evidence": {"start_cue_id": "c000001", "end_cue_id": "c000001"},
+                }
+            ]
+        },
+        transcript,
+    )
+    assert enriched == {
+        "items": [
+            {
+                "text": "要点",
+                "evidence": {
+                    "start_cue_id": "c000001",
+                    "end_cue_id": "c000001",
+                    "start_ms": 0,
+                    "end_ms": 1000,
+                },
+            }
+        ]
+    }

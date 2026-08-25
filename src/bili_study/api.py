@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request, status
@@ -17,11 +17,23 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
-from bili_study.domain import DomainError, SubtitleTrackUnavailable, build_transcript, new_note
-from bili_study.jobs import PersistentJobWorker
+from bili_study.domain import (
+    DomainError,
+    EvidenceRef,
+    SubtitleTrackUnavailable,
+    TranscriptRevision,
+    build_transcript,
+    new_note,
+)
+from bili_study.jobs import PersistentJobWorker, ProgressCallback
 from bili_study.provider import OpenAIChatAdapter, ProviderConfigStore, ProviderSecretStore
 from bili_study.security import PairingStore, SecurityError, TokenRegistry, valid_extension_origin
-from bili_study.services import GuideGenerator, guide_from_payload, render_guide_markdown
+from bili_study.services import (
+    GuideGenerator,
+    guide_from_payload,
+    practice_questions,
+    render_guide_markdown,
+)
 from bili_study.storage import (
     AppPaths,
     Library,
@@ -41,7 +53,7 @@ from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, creat
 from bili_subtitle.infrastructure.credentials import KeyringCredentialStore
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 MAX_REQUEST_BYTES = 1_048_576
 RATE_LIMIT_PER_MINUTE = 120
 
@@ -83,6 +95,11 @@ class ChapterDetailRequest(StrictModel):
     provider: str = Field(min_length=1, max_length=100)
 
 
+class ChapterPracticeRequest(StrictModel):
+    library: str = Field(min_length=1, max_length=100)
+    provider: str = Field(min_length=1, max_length=100)
+
+
 class NoteRequest(StrictModel):
     library: str = Field(min_length=1, max_length=100)
     source_id: str = Field(min_length=1, max_length=100)
@@ -102,6 +119,22 @@ class ReflectionRequest(StrictModel):
 class JobAccepted(StrictModel):
     job_id: str
     status: Literal["queued"] = "queued"
+
+
+class JobProgressResponse(StrictModel):
+    phase: str
+    percent: int = Field(ge=0, le=100)
+
+
+class JobResponse(StrictModel):
+    job_id: str
+    kind: str
+    status: Literal["queued", "running", "succeeded", "failed", "interrupted"]
+    result: dict[str, Any] | None = None
+    error_code: str | None = None
+    progress: JobProgressResponse | None = None
+    created_at: str
+    updated_at: str
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -153,8 +186,17 @@ def _platform_client() -> tuple[Any, Any]:
     return client, credential
 
 
-def _inspect_job(_paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
+def _no_progress(_phase: str, _percent: int) -> None:
+    return None
+
+
+def _inspect_job(
+    _paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
     del _paths
+    progress("fetching_video", 15)
     client, _ = _platform_client()
     with client:
         selection = resolve_selection(
@@ -171,6 +213,7 @@ def _inspect_job(_paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
             tracks = ()
         finally:
             adapter.discard_pending(bvid=selection.video.bvid, cid=page.cid)
+    progress("validating_tracks", 90)
     return {
         "schema_version": 1,
         "source_id": f"{selection.video.bvid}:p{page.number}",
@@ -221,15 +264,44 @@ def _download_transcript(raw: dict[str, Any]):
     )
 
 
-def _guide_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
+def _with_evidence_times(value: object, transcript: TranscriptRevision) -> object:
+    if isinstance(value, list):
+        return [_with_evidence_times(item, transcript) for item in cast(list[object], value)]
+    if not isinstance(value, dict):
+        return value
+    raw = cast(dict[object, object], value)
+    result: dict[str, object] = {
+        str(key): _with_evidence_times(item, transcript) for key, item in raw.items()
+    }
+    if "start_cue_id" in result and "end_cue_id" in result:
+        evidence = EvidenceRef(
+            transcript.revision_id,
+            str(result["start_cue_id"]),
+            str(result["end_cue_id"]),
+        )
+        result["start_ms"], result["end_ms"] = evidence.time_range(transcript)
+    return result
+
+
+def _guide_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
     library, repository = _library(paths, str(raw["library"]))
+    progress("fetching_transcript", 10)
     transcript = _download_transcript(raw)
     repository.save_transcript(transcript)
+    progress("preparing_outline", 20)
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
         result = GuideGenerator(chat, repository).generate(
-            transcript, config, regenerate=bool(raw.get("regenerate", False))
+            transcript,
+            config,
+            regenerate=bool(raw.get("regenerate", False)),
+            progress=progress,
         )
+    progress("publishing", 90)
     publish_generated(
         library, result.guide.guide_id, render_guide_markdown(result.guide, transcript)
     )
@@ -240,7 +312,12 @@ def _guide_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _detail_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
+def _detail_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
+    progress("preparing_chapter", 15)
     _, repository = _library(paths, str(raw["library"]))
     payload = repository.guide_payload(str(raw["guide_id"]))
     transcript = repository.get_transcript(str(payload["revision_id"]))
@@ -252,20 +329,62 @@ def _detail_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
     except StopIteration as exc:
         raise DomainError("章节不存在。") from exc
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
+    progress("generating_detail", 35)
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
-        detail, _ = GuideGenerator(chat, repository).generate_chapter_detail(transcript, chapter)
+        detail, _ = GuideGenerator(chat, repository).generate_chapter_detail(
+            transcript, chapter, progress=progress
+        )
+    progress("validating_evidence", 80)
     repository.save_chapter_detail(guide.guide_id, chapter.chapter_id, detail)
+    progress("publishing", 90)
     return {"guide_id": guide.guide_id, "chapter_id": chapter.chapter_id, "detail": detail}
 
 
-def _reflection_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
+def _practice_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
+    progress("preparing_chapter", 15)
+    _, repository = _library(paths, str(raw["library"]))
+    payload = repository.guide_payload(str(raw["guide_id"]))
+    transcript = repository.get_transcript(str(payload["revision_id"]))
+    guide = guide_from_payload(
+        payload, transcript, str(payload["fingerprint"]), str(payload["output_language"])
+    )
+    try:
+        chapter = next(c for c in guide.chapters if c.chapter_id == str(raw["chapter_id"]))
+    except StopIteration as exc:
+        raise DomainError("章节不存在。") from exc
+    config = ProviderConfigStore(paths).get(str(raw["provider"]))
+    progress("generating_practice", 35)
+    with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
+        practice, _ = GuideGenerator(chat, repository).generate_chapter_practice(
+            transcript, chapter, progress=progress
+        )
+    progress("validating_evidence", 80)
+    repository.save_chapter_practice(guide.guide_id, chapter.chapter_id, practice)
+    progress("publishing", 90)
+    return {"guide_id": guide.guide_id, "chapter_id": chapter.chapter_id}
+
+
+def _reflection_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
+    progress("preparing_reflection", 15)
     library, repository = _library(paths, str(raw["library"]))
     payload = repository.guide_payload(str(raw["guide_id"]))
     transcript = repository.get_transcript(str(payload["revision_id"]))
     guide = guide_from_payload(
         payload, transcript, str(payload["fingerprint"]), str(payload["output_language"])
     )
-    questions = (question for chapter in guide.chapters for question in chapter.questions)
+    questions = [question for chapter in guide.chapters for question in chapter.questions]
+    practices = repository.chapter_practices(guide.guide_id)
+    for chapter in guide.chapters:
+        if practice := practices.get(chapter.chapter_id):
+            questions.extend(practice_questions(practice, transcript, chapter))
     try:
         question = next(q for q in questions if q.question_id == str(raw["question_id"]))
     except StopIteration as exc:
@@ -279,6 +398,7 @@ def _reflection_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
         response=str(raw["response"]),
     )
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
+    progress("generating_feedback", 40)
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
         feedback, _ = GuideGenerator(chat, repository).generate_reflection(
             transcript, question, str(raw["response"])
@@ -290,6 +410,7 @@ def _reflection_job(paths: AppPaths, raw: dict[str, Any]) -> dict[str, Any]:
         "feedback": feedback,
     }
     repository.save_reflection(reflection_id, transcript.revision_id, question.question_id, result)
+    progress("publishing", 90)
     return result
 
 
@@ -308,10 +429,19 @@ def create_app(
         else StudyRepository(app_paths.state_dir / "api.sqlite3")
     )
     app_worker = worker or PersistentJobWorker(job_repository)
-    app_worker.register("video_inspect", lambda raw: _inspect_job(app_paths, raw))
-    app_worker.register("study_guide", lambda raw: _guide_job(app_paths, raw))
-    app_worker.register("chapter_detail", lambda raw: _detail_job(app_paths, raw))
-    app_worker.register("reflection", lambda raw: _reflection_job(app_paths, raw))
+    app_worker.register(
+        "video_inspect", lambda raw, progress: _inspect_job(app_paths, raw, progress)
+    )
+    app_worker.register("study_guide", lambda raw, progress: _guide_job(app_paths, raw, progress))
+    app_worker.register(
+        "chapter_detail", lambda raw, progress: _detail_job(app_paths, raw, progress)
+    )
+    app_worker.register(
+        "chapter_practice", lambda raw, progress: _practice_job(app_paths, raw, progress)
+    )
+    app_worker.register(
+        "reflection", lambda raw, progress: _reflection_job(app_paths, raw, progress)
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -454,11 +584,11 @@ def create_app(
         LibraryRegistry(app_paths).get(body.library)
         return JobAccepted(job_id=app_worker.submit("study_guide", body.model_dump()))
 
-    @app.get("/api/v1/jobs/{job_id}", operation_id="getJob")
-    def _get_job(job_id: str, _: Auth) -> dict[str, Any]:
+    @app.get("/api/v1/jobs/{job_id}", response_model=JobResponse, operation_id="getJob")
+    def _get_job(job_id: str, _: Auth) -> JobResponse:
         record = job_repository.job(job_id)
         record.pop("request", None)
-        return record
+        return JobResponse.model_validate(record)
 
     @app.get("/api/v1/study-guides/{guide_id}", operation_id="getStudyGuide")
     def _get_study_guide(guide_id: str, library: str, authenticated_origin: Auth) -> dict[str, Any]:
@@ -480,7 +610,21 @@ def create_app(
                 qstart, qend = domain_question.evidence.time_range(transcript)
                 question["start_ms"] = qstart
                 question["end_ms"] = qend
-        result["details"] = repository.chapter_details(guide_id)
+        result["details"] = _with_evidence_times(repository.chapter_details(guide_id), transcript)
+        practices = repository.chapter_practices(guide_id)
+        for chapter in guide.chapters:
+            practice = practices.get(chapter.chapter_id)
+            if practice is None:
+                continue
+            for question, domain_question in zip(
+                practice.get("questions", []),
+                practice_questions(practice, transcript, chapter),
+                strict=True,
+            ):
+                start, end = domain_question.evidence.time_range(transcript)
+                question["start_ms"] = start
+                question["end_ms"] = end
+        result["practices"] = practices
         return result
 
     @app.post(
@@ -494,6 +638,18 @@ def create_app(
     ) -> JobAccepted:
         request = {**body.model_dump(), "guide_id": guide_id, "chapter_id": chapter_id}
         return JobAccepted(job_id=app_worker.submit("chapter_detail", request))
+
+    @app.post(
+        "/api/v1/study-guides/{guide_id}/chapters/{chapter_id}/practice",
+        response_model=JobAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+        operation_id="createChapterPractice",
+    )
+    def _create_chapter_practice(
+        guide_id: str, chapter_id: str, body: ChapterPracticeRequest, _: Auth
+    ) -> JobAccepted:
+        request = {**body.model_dump(), "guide_id": guide_id, "chapter_id": chapter_id}
+        return JobAccepted(job_id=app_worker.submit("chapter_practice", request))
 
     @app.post("/api/v1/notes", status_code=201, operation_id="createNote")
     def _create_note(body: NoteRequest, _: Auth) -> dict[str, Any]:

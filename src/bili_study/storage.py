@@ -134,7 +134,7 @@ class LibraryRegistry:
 
 
 class StudyRepository:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, database: Path) -> None:
         self.database = database
@@ -159,6 +159,7 @@ class StudyRepository:
     def _migrate(self) -> None:
         existed = self.database.exists() and self.database.stat().st_size > 0
         backup = self.database.with_suffix(".sqlite3.bak")
+        version = 0
         if existed:
             try:
                 with sqlite3.connect(self.database) as check:
@@ -199,9 +200,15 @@ class StudyRepository:
                     CREATE TABLE IF NOT EXISTS api_jobs (
                         job_id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
                         request TEXT NOT NULL, result TEXT, error_code TEXT,
-                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                        progress TEXT
                     );
                     CREATE TABLE IF NOT EXISTS chapter_details (
+                        guide_id TEXT NOT NULL, chapter_id TEXT NOT NULL, payload TEXT NOT NULL,
+                        PRIMARY KEY(guide_id, chapter_id),
+                        FOREIGN KEY(guide_id) REFERENCES guides(guide_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS chapter_practices (
                         guide_id TEXT NOT NULL, chapter_id TEXT NOT NULL, payload TEXT NOT NULL,
                         PRIMARY KEY(guide_id, chapter_id),
                         FOREIGN KEY(guide_id) REFERENCES guides(guide_id)
@@ -211,9 +218,12 @@ class StudyRepository:
                         question_id TEXT NOT NULL, payload TEXT NOT NULL,
                         FOREIGN KEY(revision_id) REFERENCES transcripts(revision_id)
                     );
-                    PRAGMA user_version = 2;
                     """
                 )
+                columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(api_jobs)")}
+                if "progress" not in columns:
+                    connection.execute("ALTER TABLE api_jobs ADD COLUMN progress TEXT")
+                connection.execute("PRAGMA user_version = 3")
         except (sqlite3.Error, StorageError) as exc:
             if backup.exists():
                 shutil.copy2(backup, self.database)
@@ -328,13 +338,17 @@ class StudyRepository:
         job_id = str(uuid4())
         with self.connect() as connection:
             connection.execute(
-                "INSERT INTO api_jobs VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?)",
+                "INSERT INTO api_jobs "
+                "(job_id, kind, status, request, result, error_code, "
+                "created_at, updated_at, progress) "
+                "VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?, ?)",
                 (
                     job_id,
                     kind,
                     json.dumps(request, ensure_ascii=False, sort_keys=True),
                     timestamp,
                     timestamp,
+                    json.dumps({"phase": "queued", "percent": 0}),
                 ),
             )
         return job_id
@@ -342,11 +356,29 @@ class StudyRepository:
     def claim_job(self, job_id: str, timestamp: str) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
-                "UPDATE api_jobs SET status = 'running', updated_at = ? "
+                "UPDATE api_jobs SET status = 'running', updated_at = ?, progress = ? "
                 "WHERE job_id = ? AND status = 'queued'",
-                (timestamp, job_id),
+                (timestamp, json.dumps({"phase": "starting", "percent": 1}), job_id),
             )
         return cursor.rowcount == 1
+
+    def update_job_progress(self, job_id: str, phase: str, percent: int, timestamp: str) -> None:
+        if not phase or not 0 <= percent <= 99:
+            raise StorageError("API 任务进度无效。")
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT progress FROM api_jobs WHERE job_id = ? AND status = 'running'",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise StorageError("API 任务状态转换无效。")
+            current = json.loads(str(row["progress"])) if row["progress"] else {"percent": 0}
+            if percent < int(current.get("percent", 0)):
+                raise StorageError("API 任务进度不得倒退。")
+            connection.execute(
+                "UPDATE api_jobs SET progress = ?, updated_at = ? WHERE job_id = ?",
+                (json.dumps({"phase": phase, "percent": percent}), timestamp, job_id),
+            )
 
     def complete_job(
         self,
@@ -362,9 +394,22 @@ class StudyRepository:
         payload = json.dumps(result, ensure_ascii=False, sort_keys=True) if result else None
         with self.connect() as connection:
             cursor = connection.execute(
-                "UPDATE api_jobs SET status = ?, result = ?, error_code = ?, updated_at = ? "
+                "UPDATE api_jobs SET status = ?, result = ?, error_code = ?, updated_at = ?, "
+                "progress = ? "
                 "WHERE job_id = ? AND status = 'running'",
-                (status, payload, error_code, timestamp, job_id),
+                (
+                    status,
+                    payload,
+                    error_code,
+                    timestamp,
+                    json.dumps(
+                        {
+                            "phase": "completed" if status == "succeeded" else "failed",
+                            "percent": 100,
+                        }
+                    ),
+                    job_id,
+                ),
             )
         if cursor.rowcount != 1:
             raise StorageError("API 任务状态转换无效。")
@@ -383,6 +428,7 @@ class StudyRepository:
             "request": json.loads(str(row["request"])),
             "result": json.loads(str(row["result"])) if row["result"] else None,
             "error_code": str(row["error_code"]) if row["error_code"] else None,
+            "progress": json.loads(str(row["progress"])) if row["progress"] else None,
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
         }
@@ -392,8 +438,8 @@ class StudyRepository:
         with self.connect() as connection:
             connection.execute(
                 "UPDATE api_jobs SET status = 'queued', error_code = 'service_restarted', "
-                "updated_at = ? WHERE status = 'running'",
-                (timestamp,),
+                "updated_at = ?, progress = ? WHERE status = 'running'",
+                (timestamp, json.dumps({"phase": "queued", "percent": 0})),
             )
             rows = connection.execute(
                 "SELECT job_id FROM api_jobs WHERE status = 'queued' ORDER BY rowid"
@@ -411,6 +457,23 @@ class StudyRepository:
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT chapter_id, payload FROM chapter_details WHERE guide_id = ?", (guide_id,)
+            ).fetchall()
+        return {str(row["chapter_id"]): json.loads(str(row["payload"])) for row in rows}
+
+    def save_chapter_practice(
+        self, guide_id: str, chapter_id: str, payload: dict[str, Any]
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO chapter_practices VALUES (?, ?, ?)",
+                (guide_id, chapter_id, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            )
+
+    def chapter_practices(self, guide_id: str) -> dict[str, dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT chapter_id, payload FROM chapter_practices WHERE guide_id = ?",
+                (guide_id,),
             ).fetchall()
         return {str(row["chapter_id"]): json.loads(str(row["payload"])) for row in rows}
 

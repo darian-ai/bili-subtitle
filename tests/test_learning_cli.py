@@ -224,19 +224,19 @@ def test_guide_and_chapter_cli_generate_show_and_clear(
         del args, kwargs
         instances += 1
         responses = (
-            [json.dumps({"chapters": []}), json.dumps(guide)]
+            [json.dumps(guide)]
             if instances == 1
             else [
                 json.dumps(
                     {
                         "summary": "详情",
-                        "key_points": [],
-                        "terms": [],
-                        "easy_to_miss": [],
-                        "evidence": {
+                        "summary_evidence": {
                             "start_cue_id": "c000001",
                             "end_cue_id": "c000001",
                         },
+                        "key_points": [],
+                        "terms": [],
+                        "easy_to_miss": [],
                     }
                 )
             ]

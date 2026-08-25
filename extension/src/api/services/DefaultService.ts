@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ChapterDetailRequest } from '../models/ChapterDetailRequest';
+import type { ChapterPracticeRequest } from '../models/ChapterPracticeRequest';
 import type { JobAccepted } from '../models/JobAccepted';
+import type { JobResponse } from '../models/JobResponse';
 import type { NoteRequest } from '../models/NoteRequest';
 import type { PairRequest } from '../models/PairRequest';
 import type { PairResponse } from '../models/PairResponse';
@@ -27,14 +29,14 @@ export class DefaultService {
     }
     /**
      *  Get Job
-     * @returns any Successful Response
+     * @returns JobResponse Successful Response
      * @throws ApiError
      */
     public static getJob({
         jobId,
     }: {
         jobId: string,
-    }): CancelablePromise<Record<string, any>> {
+    }): CancelablePromise<JobResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/jobs/{job_id}',
@@ -206,6 +208,34 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/study-guides/{guide_id}/chapters/{chapter_id}/details',
+            path: {
+                'guide_id': guideId,
+                'chapter_id': chapterId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Create Chapter Practice
+     * @returns JobAccepted Successful Response
+     * @throws ApiError
+     */
+    public static createChapterPractice({
+        guideId,
+        chapterId,
+        requestBody,
+    }: {
+        guideId: string,
+        chapterId: string,
+        requestBody: ChapterPracticeRequest,
+    }): CancelablePromise<JobAccepted> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/study-guides/{guide_id}/chapters/{chapter_id}/practice',
             path: {
                 'guide_id': guideId,
                 'chapter_id': chapterId,

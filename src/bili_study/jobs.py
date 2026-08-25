@@ -19,7 +19,8 @@ from bili_subtitle.domain.errors import (
     SubtitleNetworkError,
 )
 
-JobHandler = Callable[[dict[str, Any]], dict[str, Any]]
+ProgressCallback = Callable[[str, int], None]
+JobHandler = Callable[[dict[str, Any], ProgressCallback], dict[str, Any]]
 
 
 def stable_error_code(exc: BaseException) -> str:
@@ -89,8 +90,12 @@ class PersistentJobWorker:
                 handler = self._handlers.get(str(record["kind"]))
                 if handler is None or not self.repository.claim_job(job_id, now_iso()):
                     continue
+
+                def progress(phase: str, percent: int, current_job_id: str = job_id) -> None:
+                    self.repository.update_job_progress(current_job_id, phase, percent, now_iso())
+
                 try:
-                    result = handler(record["request"])
+                    result = handler(record["request"], progress)
                 except BaseException as exc:  # worker must preserve the next queued job
                     self.repository.complete_job(
                         job_id,
