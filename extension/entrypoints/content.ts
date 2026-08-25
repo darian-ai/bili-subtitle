@@ -27,7 +27,7 @@ export default defineContentScript({
     const notifyNavigation = () => {
       if (previous !== location.href) {
         previous = location.href;
-        chrome.runtime.sendMessage({ type: "video-navigation", context: context() }).catch(() => undefined);
+        chrome.runtime.sendMessage({ type: "content-video-navigation", context: context() }).catch(() => undefined);
       }
     };
     window.addEventListener("popstate", notifyNavigation);

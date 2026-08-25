@@ -21,6 +21,7 @@ from bili_study.domain import (
     EvidenceRef,
     GuidingQuestion,
     StudyGuide,
+    SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
     build_transcript,
     now_iso,
@@ -320,6 +321,7 @@ def test_stable_error_codes_do_not_expose_exception_text() -> None:
         stable_error_code(SubtitleTrackUnavailable("selected track"))
         == "subtitle_track_unavailable"
     )
+    assert stable_error_code(SubtitleTrackAmbiguous("same name")) == "subtitle_track_ambiguous"
     assert stable_error_code(RuntimeError("canary-secret")) == "internal_error"
 
 
@@ -441,6 +443,16 @@ def test_async_api_routes_and_guide_read_model(
         read = client.get("/api/v1/study-guides/guide-1?library=main", headers=headers)
         assert read.json()["chapters"][0]["start_ms"] == 0
         assert read.json()["chapters"][0]["questions"][0]["end_ms"] == 2000
+        workspace = client.get(
+            f"/api/v1/videos/{transcript.bvid}/pages/1/workspace?library=main",
+            headers=headers,
+        )
+        assert workspace.json()["guide_id"] == guide.guide_id
+        empty_workspace = client.get(
+            f"/api/v1/videos/{transcript.bvid}/pages/2/workspace?library=main",
+            headers=headers,
+        )
+        assert empty_workspace.json()["guide_id"] is None
         detail = client.post(
             "/api/v1/study-guides/guide-1/chapters/ch001/details",
             headers=headers,
@@ -582,6 +594,27 @@ def test_platform_inspect_and_transcript_download_adapters(
                 "title": "标题",
                 "track_id": 999,
             }
+        )
+
+
+def test_rotated_track_id_uses_only_a_unique_stable_descriptor() -> None:
+    old_id = "2080600637229272576"
+    replacement = SubtitleTrack(9, "zh-CN", "中文", SubtitleTrackKind.HUMAN)
+    raw = {
+        "track_id": old_id,
+        "track_language": "zh-CN",
+        "track_display_name": "中文",
+        "track_kind": "human",
+    }
+    assert api_module._select_subtitle_track((replacement,), raw) == replacement
+
+    duplicate = SubtitleTrack(10, "zh-CN", "中文", SubtitleTrackKind.HUMAN)
+    with pytest.raises(SubtitleTrackAmbiguous):
+        api_module._select_subtitle_track((replacement, duplicate), raw)
+
+    with pytest.raises(SubtitleTrackUnavailable):
+        api_module._select_subtitle_track(
+            (SubtitleTrack(11, "en", "English", SubtitleTrackKind.HUMAN),), raw
         )
 
 
@@ -826,6 +859,32 @@ def test_practice_job_persists_questions(paths: AppPaths, monkeypatch: pytest.Mo
         "evidence": [{"start_cue_id": "c000001", "end_cue_id": "c000001"}],
     }
     assert any((library.path / "reviews").glob("*.md"))
+    saved_reflection = repository.reflections(transcript.revision_id)[0]
+    assert saved_reflection["status"] == "succeeded"
+    assert saved_reflection["response"] == "我的回答"
+
+    class FailingGenerator(Generator):
+        def generate_reflection(
+            self, value: object, question: GuidingQuestion, response: str
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            del value, question, response
+            raise RuntimeError("invalid provider output")
+
+    monkeypatch.setattr(api_module, "GuideGenerator", FailingGenerator)
+    with pytest.raises(RuntimeError, match="invalid provider output"):
+        api_module._reflection_job(
+            paths,
+            {
+                "library": "main",
+                "provider": "test",
+                "guide_id": guide.guide_id,
+                "question_id": "q-ch001-01",
+                "response": "不能丢失的回答",
+            },
+        )
+    failed_reflection = repository.reflections(transcript.revision_id)[-1]
+    assert failed_reflection["status"] == "feedback_failed"
+    assert failed_reflection["response"] == "不能丢失的回答"
 
 
 def test_evidence_times_are_added_recursively() -> None:

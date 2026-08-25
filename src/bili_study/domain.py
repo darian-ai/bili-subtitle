@@ -20,6 +20,10 @@ class SubtitleTrackUnavailable(DomainError):
     """The subtitle track selected during inspection is no longer available."""
 
 
+class SubtitleTrackAmbiguous(DomainError):
+    """More than one current track matches the inspected stable descriptors."""
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptCue:
     cue_id: str

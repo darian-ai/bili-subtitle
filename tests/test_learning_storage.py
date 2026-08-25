@@ -94,6 +94,15 @@ def test_repository_roundtrip_cache_and_personal_note(tmp_path: Path) -> None:
     )
     assert "owner: user" in reflection.read_text(encoding="utf-8")
     assert "我的复述" in reflection.read_text(encoding="utf-8")
+    repository.save_reflection(
+        "reflection-1", revision.revision_id, "q1", {"status": "pending", "response": "我的复述"}
+    )
+    repository.save_reflection(
+        "reflection-1", revision.revision_id, "q1", {"status": "succeeded", "response": "我的复述"}
+    )
+    assert repository.reflections(revision.revision_id) == (
+        {"status": "succeeded", "response": "我的复述"},
+    )
     task_id = repository.start_task("guide", "start")
     assert repository.task_status(task_id) == ("running", None)
     repository.finish_task(task_id, "succeeded", None, "end")

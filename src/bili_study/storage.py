@@ -320,6 +320,20 @@ class StudyRepository:
             raise StorageError("学习指南不存在。")
         return json.loads(str(row["payload"]))
 
+    def latest_guide_for_video(self, bvid: str, page: int) -> dict[str, Any] | None:
+        """Return the newest guide for a video page without making a model request."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT guides.payload AS guide_payload, transcripts.payload AS transcript_payload
+                   FROM guides JOIN transcripts USING (revision_id)
+                   ORDER BY guides.rowid DESC"""
+            ).fetchall()
+        for row in rows:
+            transcript = json.loads(str(row["transcript_payload"]))
+            if transcript.get("bvid") == bvid and int(transcript.get("page", 0)) == page:
+                return json.loads(str(row["guide_payload"]))
+        return None
+
     def save_note(self, note: PersonalNote) -> None:
         with self.connect() as connection:
             connection.execute(
@@ -482,7 +496,7 @@ class StudyRepository:
     ) -> None:
         with self.connect() as connection:
             connection.execute(
-                "INSERT INTO reflections VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO reflections VALUES (?, ?, ?, ?)",
                 (
                     reflection_id,
                     revision_id,
@@ -490,6 +504,14 @@ class StudyRepository:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                 ),
             )
+
+    def reflections(self, revision_id: str) -> tuple[dict[str, Any], ...]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM reflections WHERE revision_id = ? ORDER BY rowid",
+                (revision_id,),
+            ).fetchall()
+        return tuple(json.loads(str(row["payload"])) for row in rows)
 
 
 def library_database(paths: AppPaths, library: Library) -> Path:

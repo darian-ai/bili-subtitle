@@ -10,6 +10,9 @@ export type SourceRequest = {
     provider: string;
     regenerate?: boolean;
     title: string;
+    track_display_name?: (string | null);
     track_id: string;
+    track_kind?: ('human' | 'ai' | null);
+    track_language?: (string | null);
 };
 

@@ -56,6 +56,12 @@ DETAIL_SCHEMA = {
 PRACTICE_SCHEMA = {
     "questions": [{"question_id": "q-ch001-01", "text": "string", "evidence": EVIDENCE_SCHEMA}]
 }
+REFLECTION_SCHEMA = {
+    "covered": ["string"],
+    "missing": ["string"],
+    "misconceptions": ["string"],
+    "evidence": [EVIDENCE_SCHEMA],
+}
 
 
 def _ignore_progress(_phase: str, _percent: int) -> None:
@@ -334,15 +340,25 @@ class GuideGenerator:
 
         def validate(payload: dict[str, Any]) -> None:
             for field in ("covered", "missing", "misconceptions"):
-                if not isinstance(payload.get(field), list) or any(
-                    not isinstance(item, str) for item in cast(list[object], payload.get(field))
+                raw_items = payload.get(field)
+                if not isinstance(raw_items, list):
+                    raise ProviderStructureError("复述反馈 schema 无效。")
+                items = cast(list[object], raw_items)
+                if len(items) > 8 or any(
+                    not isinstance(item, str) or not item.strip() for item in items
                 ):
                     raise ProviderStructureError("复述反馈 schema 无效。")
             evidence = payload.get("evidence")
             if not isinstance(evidence, list):
                 raise ProviderStructureError("复述反馈缺少证据。")
-            for item in cast(list[object], evidence):
-                _evidence(item, transcript).resolve(transcript)
+            evidence_items = cast(list[object], evidence)
+            if not 1 <= len(evidence_items) <= 5:
+                raise ProviderStructureError("复述反馈缺少证据。")
+            allowed = {cue.cue_id for cue in cues}
+            for item in evidence_items:
+                resolved = _evidence(item, transcript).resolve(transcript)
+                if any(cue.cue_id not in allowed for cue in resolved):
+                    raise DomainError("复述反馈证据超出当前问题范围。")
 
         payload, usages = self._request_json(
             json.dumps(
@@ -351,8 +367,9 @@ class GuideGenerator:
                     "question_id": question.question_id,
                     "question": question.text,
                     "response": response,
-                    "required_fields": ["covered", "missing", "misconceptions", "evidence"],
+                    "output_schema": REFLECTION_SCHEMA,
                     "rules": [
+                        "严格匹配 output_schema；四个字段都必须存在",
                         "只依据 DATA 判断；证据不足时在 missing 中明确无法判断",
                         "evidence 只能引用 DATA 中的 cue ID",
                     ],

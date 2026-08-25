@@ -342,11 +342,52 @@
             "title": "Title",
             "type": "string"
           },
+          "track_display_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Display Name"
+          },
           "track_id": {
             "maxLength": 32,
             "pattern": "^[1-9][0-9]*$",
             "title": "Track Id",
             "type": "string"
+          },
+          "track_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "human",
+                  "ai"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Kind"
+          },
+          "track_language": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Language"
           }
         },
         "required": [
@@ -981,6 +1022,70 @@
           }
         ],
         "summary": " Inspect Video"
+      }
+    },
+    "/api/v1/videos/{bvid}/pages/{page}/workspace": {
+      "get": {
+        "operationId": "getVideoWorkspace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bvid",
+            "required": true,
+            "schema": {
+              "title": "Bvid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Getvideoworkspace",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Get Video Workspace"
       }
     }
   }

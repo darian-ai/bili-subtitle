@@ -15,11 +15,12 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from bili_study.domain import (
     DomainError,
     EvidenceRef,
+    SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
     TranscriptRevision,
     build_transcript,
@@ -87,7 +88,19 @@ class SourceRequest(StrictModel):
     # Bilibili track IDs can exceed JavaScript's MAX_SAFE_INTEGER. Keep them as
     # decimal strings at the HTTP boundary and convert only inside Python.
     track_id: str = Field(pattern=r"^[1-9][0-9]*$", max_length=32)
+    track_language: str | None = Field(default=None, min_length=1, max_length=64)
+    track_display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    track_kind: Literal["human", "ai"] | None = None
     regenerate: bool = False
+
+    @model_validator(mode="after")
+    def require_complete_track_descriptor(self) -> SourceRequest:
+        descriptors = (self.track_language, self.track_display_name, self.track_kind)
+        if any(value is not None for value in descriptors) and not all(
+            value is not None for value in descriptors
+        ):
+            raise ValueError("字幕轨道稳定描述必须完整提供。")
+        return self
 
 
 class ChapterDetailRequest(StrictModel):
@@ -235,15 +248,39 @@ def _inspect_job(
     }
 
 
+def _select_subtitle_track(tracks: tuple[Any, ...], raw: dict[str, Any]):
+    requested_id = int(raw["track_id"])
+    exact = next((track for track in tracks if track.track_id == requested_id), None)
+    if exact is not None:
+        return exact
+
+    descriptors = (
+        raw.get("track_language"),
+        raw.get("track_display_name"),
+        raw.get("track_kind"),
+    )
+    if all(value is not None for value in descriptors):
+        matches = tuple(
+            track
+            for track in tracks
+            if track.language == descriptors[0]
+            and track.display_name == descriptors[1]
+            and track.kind.value == descriptors[2]
+        )
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise SubtitleTrackAmbiguous("发现多个同名字幕轨道，请重新选择字幕轨道。")
+
+    raise SubtitleTrackUnavailable("选定字幕轨道已不可用，请重新检查视频。")
+
+
 def _download_transcript(raw: dict[str, Any]):
     client, _ = _platform_client()
     with client:
         adapter = BilibiliSubtitleAdapter(client)
         tracks = adapter.discover(bvid=str(raw["bvid"]), cid=int(raw["cid"]))
-        try:
-            selected = next(track for track in tracks if track.track_id == int(raw["track_id"]))
-        except StopIteration as exc:
-            raise SubtitleTrackUnavailable("选定字幕轨道已不可用，请重新检查视频。") from exc
+        selected = _select_subtitle_track(tracks, raw)
         body = adapter.download_selected(
             bvid=str(raw["bvid"]), cid=int(raw["cid"]), selected=selected
         )
@@ -397,19 +434,42 @@ def _reflection_job(
         question_id=question.question_id,
         response=str(raw["response"]),
     )
+    attempt = {
+        "reflection_id": reflection_id,
+        "guide_id": guide.guide_id,
+        "question_id": question.question_id,
+        "response": str(raw["response"]),
+        "status": "pending",
+        "feedback": None,
+    }
+    repository.save_reflection(reflection_id, transcript.revision_id, question.question_id, attempt)
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     progress("generating_feedback", 40)
-    with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
-        feedback, _ = GuideGenerator(chat, repository).generate_reflection(
-            transcript, question, str(raw["response"])
+    try:
+        with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
+            feedback, _ = GuideGenerator(chat, repository).generate_reflection(
+                transcript, question, str(raw["response"])
+            )
+    except Exception:
+        repository.save_reflection(
+            reflection_id,
+            transcript.revision_id,
+            question.question_id,
+            {**attempt, "status": "feedback_failed"},
         )
+        raise
     result = {
         "reflection_id": reflection_id,
         "guide_id": guide.guide_id,
         "question_id": question.question_id,
         "feedback": feedback,
     }
-    repository.save_reflection(reflection_id, transcript.revision_id, question.question_id, result)
+    repository.save_reflection(
+        reflection_id,
+        transcript.revision_id,
+        question.question_id,
+        {**result, "response": str(raw["response"]), "status": "succeeded"},
+    )
     progress("publishing", 90)
     return result
 
@@ -626,6 +686,23 @@ def create_app(
                 question["end_ms"] = end
         result["practices"] = practices
         return result
+
+    @app.get(
+        "/api/v1/videos/{bvid}/pages/{page}/workspace",
+        operation_id="getVideoWorkspace",
+    )
+    def _get_video_workspace(
+        bvid: str, page: int, library: str, authenticated_origin: Auth
+    ) -> dict[str, Any]:
+        del authenticated_origin
+        _library_value, repository = _library(app_paths, library)
+        payload = repository.latest_guide_for_video(bvid, page)
+        return {
+            "schema_version": 1,
+            "bvid": bvid,
+            "page": page,
+            "guide_id": str(payload["guide_id"]) if payload is not None else None,
+        }
 
     @app.post(
         "/api/v1/study-guides/{guide_id}/chapters/{chapter_id}/details",

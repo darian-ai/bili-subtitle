@@ -7,7 +7,12 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from bili_study.domain import DomainError, SubtitleTrackUnavailable, now_iso
+from bili_study.domain import (
+    DomainError,
+    SubtitleTrackAmbiguous,
+    SubtitleTrackUnavailable,
+    now_iso,
+)
 from bili_study.provider import ProviderError
 from bili_study.storage import StorageError, StudyRepository
 from bili_subtitle.domain.errors import (
@@ -34,6 +39,8 @@ def stable_error_code(exc: BaseException) -> str:
         return "bilibili_network_error"
     if isinstance(exc, ProviderError):
         return exc.code
+    if isinstance(exc, SubtitleTrackAmbiguous):
+        return "subtitle_track_ambiguous"
     if isinstance(exc, SubtitleTrackUnavailable):
         return "subtitle_track_unavailable"
     if isinstance(exc, DomainError):

@@ -38,6 +38,12 @@ interface Job {
 type View = { kind: "outline" } | { kind: "chapter"; chapterId: string }
   | { kind: "practice" } | { kind: "notes" };
 type Pending = "inspect" | "guide" | "detail" | "practice" | "reflection" | "note";
+interface SessionSnapshot {
+  inspection: Inspection | undefined; trackId: string | undefined; guide: Guide | undefined; view: View;
+  practiceChapterId: string; note: string; responses: Record<string, string>;
+  feedbacks: Record<string, Feedback>; status: string; pending: Pending | undefined;
+  jobProgress: { value: JobProgress | undefined; elapsed: number } | undefined;
+}
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:8765";
 const PHASES: Record<string, string> = {
@@ -54,6 +60,7 @@ const JOB_ERRORS: Record<string, string> = {
   evidence_validation: "AI 返回的字幕证据无效，自动修复后仍未通过。请重试或更换模型。",
   structure: "AI 返回格式无效，自动修复后仍未通过。请重试或更换模型。",
   subtitle_track_unavailable: "字幕轨道已变化，请重新检查字幕。",
+  subtitle_track_ambiguous: "发现多个同名字幕轨道，请重新选择字幕轨道。",
   authentication: "Provider 认证失败，请检查配置和 API Key。",
   timeout: "Provider 响应超时，请稍后重试。",
   network: "Provider 网络请求失败。",
@@ -73,7 +80,8 @@ function jobError(job: Job, prefix: string): Error {
   return new Error(`${prefix}：${JOB_ERRORS[code] ?? code}`);
 }
 
-async function currentTabMessage(message: object): Promise<any> {
+async function currentTabMessage(message: object, boundTabId?: number): Promise<any> {
+  if (boundTabId !== undefined) return chrome.tabs.sendMessage(boundTabId, message);
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id === undefined) return undefined;
   return chrome.tabs.sendMessage(tab.id, message);
@@ -98,7 +106,11 @@ function formatTime(milliseconds: number): string {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-export function App() {
+function videoKey(value: VideoContext): string | undefined {
+  return value.supported && value.bvid && value.page ? `${value.bvid}:p${value.page}` : undefined;
+}
+
+export function App({ tabId }: { tabId?: number }) {
   const [endpoint, setEndpoint] = useState(DEFAULT_ENDPOINT);
   const [, setToken] = useState("");
   const [pairCode, setPairCode] = useState("");
@@ -121,6 +133,39 @@ export function App() {
     value: JobProgress | undefined; elapsed: number;
   }>();
   const pairing = useRef(false);
+  const sessions = useRef(new Map<string, SessionSnapshot>());
+  const activeVideoKey = useRef<string | undefined>(undefined);
+  const snapshot = useRef<SessionSnapshot>({
+    inspection: undefined, trackId: undefined, guide: undefined,
+    view: { kind: "outline" }, practiceChapterId: "", note: "", responses: {}, feedbacks: {},
+    status: "尚未连接本地服务。", pending: undefined, jobProgress: undefined,
+  });
+
+  useEffect(() => {
+    snapshot.current = {
+      inspection, trackId, guide, view, practiceChapterId, note, responses, feedbacks,
+      status, pending, jobProgress,
+    };
+    if (activeVideoKey.current) sessions.current.set(activeVideoKey.current, snapshot.current);
+  }, [inspection, trackId, guide, view, practiceChapterId, note, responses, feedbacks,
+    status, pending, jobProgress]);
+
+  const switchVideo = useCallback((next: VideoContext) => {
+    const nextKey = videoKey(next);
+    const previousKey = activeVideoKey.current;
+    if (previousKey && previousKey !== nextKey) sessions.current.set(previousKey, snapshot.current);
+    if (previousKey !== nextKey) {
+      const saved = nextKey ? sessions.current.get(nextKey) : undefined;
+      setInspection(saved?.inspection); setTrackId(saved?.trackId); setGuide(saved?.guide);
+      setView(saved?.view ?? { kind: "outline" });
+      setPracticeChapterId(saved?.practiceChapterId ?? ""); setNote(saved?.note ?? "");
+      setResponses(saved?.responses ?? {}); setFeedbacks(saved?.feedbacks ?? {});
+      setPending(saved?.pending); setJobProgress(saved?.jobProgress);
+      if (saved?.status) setStatus(saved.status);
+      activeVideoKey.current = nextKey;
+    }
+    setVideo(next);
+  }, []);
 
   const configure = useCallback((base: string, bearer: string) => {
     OpenAPI.BASE = base.replace(/\/$/, "");
@@ -152,31 +197,55 @@ export function App() {
   }, [configure, loadLibraries]);
 
   useEffect(() => {
-    const refresh = () => currentTabMessage({ type: "video-context" }).then((value) => {
-      if (value) setVideo(value as VideoContext);
-    }).catch(() => setVideo({ supported: false, currentTimeMs: 0 }));
+    const refresh = () => currentTabMessage({ type: "video-context" }, tabId).then((value) => {
+      if (value) switchVideo(value as VideoContext);
+    }).catch(() => switchVideo({ supported: false, currentTimeMs: 0 }));
     refresh();
     const timer = window.setInterval(refresh, 1000);
     const listener = (message: any) => {
-      if (message?.type === "video-navigation") {
-        setInspection(undefined); setGuide(undefined); setView({ kind: "outline" }); refresh();
+      if (message?.type === "video-navigation"
+        && (tabId === undefined || message.tabId === tabId)) {
+        switchVideo(message.context as VideoContext); refresh();
       }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => { window.clearInterval(timer); chrome.runtime.onMessage.removeListener(listener); };
-  }, []);
+  }, [switchVideo, tabId]);
 
   useEffect(() => { chrome.storage.local.set({ endpoint, provider, library }); }, [endpoint, provider, library]);
 
-  const trackJob = async (jobId: string): Promise<Job> => waitJob(jobId, (value, elapsed) => {
-    setJobProgress({ value, elapsed });
+  const trackJob = async (jobId: string): Promise<Job> => {
+    const ownerKey = activeVideoKey.current;
+    return waitJob(jobId, (value, elapsed) => {
     const phase = value ? (PHASES[value.phase] ?? value.phase) : "正在处理";
-    setStatus(`${phase}… 已等待 ${elapsed} 秒`);
-  });
-
-  const refreshGuide = async (guideId: string) => {
-    setGuide(await localApi(DefaultService.getStudyGuide({ guideId, library })) as unknown as Guide);
+      const nextStatus = `${phase}… 已等待 ${elapsed} 秒`;
+      if (!ownerKey || activeVideoKey.current === ownerKey) {
+        setJobProgress({ value, elapsed }); setStatus(nextStatus);
+      } else {
+        const saved = sessions.current.get(ownerKey) ?? snapshot.current;
+        sessions.current.set(ownerKey, {
+          ...saved, jobProgress: { value, elapsed }, status: nextStatus,
+        });
+      }
+    });
   };
+
+  const fetchGuide = async (guideId: string): Promise<Guide> => {
+    return await localApi(DefaultService.getStudyGuide({ guideId, library })) as unknown as Guide;
+  };
+
+  useEffect(() => {
+    const key = videoKey(video);
+    if (!connected || !library || !video.bvid || !video.page || guide || !key) return;
+    localApi(DefaultService.getVideoWorkspace({ bvid: video.bvid, page: video.page, library }))
+      .then(async (workspace: any) => {
+        if (!workspace.guide_id) return;
+        const restored = await fetchGuide(String(workspace.guide_id));
+        if (activeVideoKey.current === key) {
+          setGuide(restored); setStatus("已加载该视频上次生成的学习内容。");
+        }
+      }).catch(() => undefined);
+  }, [connected, library, video.bvid, video.page, guide]);
 
   const pair = async () => {
     if (pairing.current) return;
@@ -212,19 +281,44 @@ export function App() {
 
   const generateGuide = async (regenerate = false) => {
     if (!inspection || trackId === undefined || !library || !provider) return;
+    const selectedTrack = inspection.tracks.find((track) => track.track_id === trackId);
+    if (!selectedTrack) return;
+    const operationKey = `${inspection.bvid}:p${inspection.page}`;
     setPending("guide"); setJobProgress(undefined); setStatus("正在生成轻量大纲…");
     try {
       const accepted = await localApi(DefaultService.createStudyGuide({ requestBody: {
         library, provider, bvid: inspection.bvid, page: inspection.page, cid: inspection.cid,
-        title: inspection.title, track_id: trackId, regenerate,
+        title: inspection.title, track_id: trackId,
+        track_language: selectedTrack.language, track_display_name: selectedTrack.display_name,
+        track_kind: selectedTrack.kind, regenerate,
       } }));
       const job = await trackJob(accepted.job_id);
       if (job.status === "failed") throw jobError(job, "生成失败");
       const guideId = String(job.result?.guide_id);
-      await refreshGuide(guideId); setPracticeChapterId(""); setView({ kind: "outline" });
-      setStatus("轻量学习大纲已就绪。");
-    } catch (error) { setStatus(errorText(error)); }
-    finally { setPending(undefined); setJobProgress(undefined); }
+      const generated = await fetchGuide(guideId);
+      if (activeVideoKey.current === operationKey) {
+        setGuide(generated); setPracticeChapterId(""); setView({ kind: "outline" });
+        setStatus("轻量学习大纲已就绪。");
+      } else {
+        const saved = sessions.current.get(operationKey) ?? snapshot.current;
+        sessions.current.set(operationKey, { ...saved, guide: generated, pending: undefined,
+          jobProgress: undefined, status: "轻量学习大纲已就绪。" });
+      }
+    } catch (error) {
+      const failedStatus = errorText(error);
+      if (activeVideoKey.current === operationKey) setStatus(failedStatus);
+      else {
+        const saved = sessions.current.get(operationKey) ?? snapshot.current;
+        sessions.current.set(operationKey, { ...saved, status: failedStatus });
+      }
+    } finally {
+      if (activeVideoKey.current === operationKey) {
+        setPending(undefined); setJobProgress(undefined);
+      } else {
+        const saved = sessions.current.get(operationKey) ?? snapshot.current;
+        sessions.current.set(operationKey, { ...saved, pending: undefined, jobProgress: undefined });
+      }
+    }
   };
 
   const loadDetail = async (chapterId: string) => {
@@ -236,7 +330,7 @@ export function App() {
       }));
       const job = await trackJob(accepted.job_id);
       if (job.status === "failed") throw jobError(job, "详情失败");
-      await refreshGuide(guide.guide_id); setStatus("章节详情已保存。");
+      setGuide(await fetchGuide(guide.guide_id)); setStatus("章节详情已保存。");
     } catch (error) { setStatus(errorText(error)); }
     finally { setPending(undefined); setJobProgress(undefined); }
   };
@@ -250,7 +344,7 @@ export function App() {
       }));
       const job = await trackJob(accepted.job_id);
       if (job.status === "failed") throw jobError(job, "练习生成失败");
-      await refreshGuide(guide.guide_id); setStatus("本章练习已就绪。");
+      setGuide(await fetchGuide(guide.guide_id)); setStatus("本章练习已就绪。");
     } catch (error) { setStatus(errorText(error)); }
     finally { setPending(undefined); setJobProgress(undefined); }
   };
@@ -287,7 +381,7 @@ export function App() {
     () => guide ? activeChapter(guide.chapters, video.currentTimeMs) : undefined,
     [guide, video.currentTimeMs],
   );
-  const seek = (timestampMs: number) => currentTabMessage({ type: "seek", timestampMs })
+  const seek = (timestampMs: number) => currentTabMessage({ type: "seek", timestampMs }, tabId)
     .catch(() => setStatus("无法跳转播放器。"));
   const selectedChapter = view.kind === "chapter"
     ? guide?.chapters.find((chapter) => chapter.chapter_id === view.chapterId) : undefined;

@@ -267,4 +267,33 @@ export class DefaultService {
             },
         });
     }
+    /**
+     *  Get Video Workspace
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static getVideoWorkspace({
+        bvid,
+        page,
+        library,
+    }: {
+        bvid: string,
+        page: number,
+        library: string,
+    }): CancelablePromise<Record<string, any>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/videos/{bvid}/pages/{page}/workspace',
+            path: {
+                'bvid': bvid,
+                'page': page,
+            },
+            query: {
+                'library': library,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
 }
