@@ -18,12 +18,15 @@ from bili_study.domain import (
 from bili_study.provider import ProviderError
 from bili_study.storage import StorageError, StudyRepository
 from bili_subtitle.domain.errors import (
+    AccessDeniedError,
     AuthenticationRequired,
     MetadataError,
     NoSubtitles,
     SubtitleAccessDenied,
     SubtitleError,
     SubtitleNetworkError,
+    UnsupportedVideoType,
+    VideoNotReadyError,
 )
 
 ProgressCallback = Callable[[str, int], None]
@@ -35,6 +38,12 @@ class JobCancelled(DomainError):
 
 
 def stable_error_code(exc: BaseException) -> str:
+    if isinstance(exc, UnsupportedVideoType):
+        return "unsupported_video_type"
+    if isinstance(exc, VideoNotReadyError):
+        return "video_not_ready"
+    if isinstance(exc, AccessDeniedError):
+        return "video_access_denied"
     if isinstance(exc, AuthenticationRequired):
         return "bilibili_authentication_required"
     if isinstance(exc, NoSubtitles):

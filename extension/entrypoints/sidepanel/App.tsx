@@ -8,6 +8,9 @@ interface Library { id: string; name: string }
 interface Track { track_id: string; language: string; display_name: string; kind: "human" | "ai" }
 interface Inspection {
   source_id: string; bvid: string; page: number; cid: number; title: string;
+  video_type: "standard_ugc"; container_type: "standalone" | "ugc_season";
+  access_mode: "public" | "entitled"; support_status: "supported" | "conditional";
+  limitations: ("current_item_only" | "existing_entitlement_required")[];
   subtitle_status: "available" | "no_subtitles"; tracks: Track[]; inspect_job_id: string;
 }
 interface Evidence { revision_id?: string; start_cue_id: string; end_cue_id: string }
@@ -85,6 +88,12 @@ const JOB_ERRORS: Record<string, string> = {
   subtitle_track_unavailable: "字幕轨道已变化，请重新检查字幕。",
   subtitle_track_ambiguous: "发现多个同名字幕轨道，请重新选择字幕轨道。",
   inspection_source_mismatch: "视频选集已变化，请等待切换完成后重新检查字幕。",
+  unsupported_video_type: "当前视频使用不支持的互动、竖屏或特殊播放器。",
+  video_not_ready: "视频仍处于首映状态，请在首映结束后重试。",
+  video_access_denied: "当前账号无法访问完整视频与字幕。",
+  no_subtitles: "当前分集没有可见字幕。",
+  subtitle_access_denied: "当前账号无法访问该字幕轨道。",
+  bilibili_authentication_required: "Bilibili 登录已失效，请重新登录。",
   authentication: "Provider 认证失败，请检查配置和 API Key。",
   timeout: "Provider 响应超时，请稍后重试。",
   network: "Provider 网络请求失败。",
@@ -167,6 +176,8 @@ export function App({ tabId }: { tabId: number }) {
     value: JobProgress | undefined; elapsed: number;
   }>();
   const pairing = useRef(false);
+  const sourceRequestSequence = useRef(0);
+  const operations = useRef(new Set<string>());
   const sessions = useRef(new Map<string, SessionSnapshot>());
   const activeVideoKey = useRef<string | undefined>(undefined);
   const workspaceRequests = useRef({ sequence: 0, latest: new Map<string, number>() });
@@ -213,9 +224,13 @@ export function App({ tabId }: { tabId: number }) {
     setAttempts(saved?.attempts ?? {}); setSavedNotes(saved?.savedNotes ?? []);
     setWorkspaceStatus(saved?.workspaceStatus ?? "idle");
     setPending(saved?.pending); setJobProgress(saved?.jobProgress);
-    setStatus(saved?.status ?? (activeScope ? "正在读取本地学习记录…" : "请打开受支持的视频页。"));
+    const inactiveStatus = !video.supported ? "请打开受支持的视频页。"
+      : video.identity_state === "transitioning" || video.identity_state === "ambiguous"
+        ? "正在确认当前视频分集…"
+        : !library ? "请选择知识库。" : "正在读取本地学习记录…";
+    setStatus(saved?.status ?? (activeScope ? "正在读取本地学习记录…" : inactiveStatus));
     activeVideoKey.current = activeScope;
-  }, [activeScope]);
+  }, [activeScope, library, video.identity_state, video.supported]);
 
   const configure = useCallback((base: string, bearer: string) => {
     OpenAPI.BASE = base.replace(/\/$/, "");
@@ -247,19 +262,32 @@ export function App({ tabId }: { tabId: number }) {
   }, [configure, loadLibraries]);
 
   useEffect(() => {
-    const refresh = () => currentTabMessage({ type: "video-context" }, tabId).then((value) => {
-      if (value) switchVideo(value as VideoContext);
-    }).catch(() => switchVideo({ supported: false, currentTimeMs: 0 }));
+    const refresh = () => {
+      const requestId = ++sourceRequestSequence.current;
+      return currentTabMessage({ type: "video-context" }, tabId).then((value) => {
+        if (requestId === sourceRequestSequence.current && value) {
+          switchVideo(value as VideoContext);
+        }
+      }).catch(() => {
+        if (requestId === sourceRequestSequence.current) {
+          switchVideo({ supported: false, currentTimeMs: 0 });
+        }
+      });
+    };
     refresh();
     const timer = window.setInterval(refresh, 1000);
     const listener = (message: any) => {
       if (message?.type === "video-navigation"
         && (tabId === undefined || message.tabId === tabId)) {
+        sourceRequestSequence.current += 1;
         switchVideo(message.context as VideoContext); refresh();
       }
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => { window.clearInterval(timer); chrome.runtime.onMessage.removeListener(listener); };
+    return () => {
+      sourceRequestSequence.current += 1;
+      window.clearInterval(timer); chrome.runtime.onMessage.removeListener(listener);
+    };
   }, [switchVideo, tabId]);
 
   useEffect(() => { chrome.storage.local.set({ endpoint, provider, library }); }, [endpoint, provider, library]);
@@ -342,7 +370,7 @@ export function App({ tabId }: { tabId: number }) {
       throw new Error("workspace 返回了不属于请求 BV/P 的结果。");
     }
     if (!lookup.guide_id && !lookup.revision_id) return undefined;
-    if (lookup.guide_id) return fetchGuideWorkspace(lookup.guide_id, libraryName);
+    if (lookup.guide_id) return fetchGuideWorkspace(lookup.guide_id, libraryName, bvid, page);
     const savedTranscript = await localApi(DefaultService.getTranscript({
       revisionId: lookup.revision_id!, library: libraryName,
     })) as Transcript;
@@ -352,13 +380,19 @@ export function App({ tabId }: { tabId: number }) {
     return { notes: [], reflections: [], transcript: savedTranscript };
   };
 
-  const fetchGuideWorkspace = async (guideId: string, libraryName: string) => {
+  const fetchGuideWorkspace = async (
+    guideId: string, libraryName: string, expectedBvid?: string, expectedPage?: number,
+  ) => {
     const workspace = await localApi(DefaultService.getStudyGuideWorkspace({
       guideId, library: libraryName,
     })) as unknown as { guide: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[] };
     const savedTranscript = await localApi(DefaultService.getTranscript({
       revisionId: workspace.guide.revision_id, library: libraryName,
     })) as Transcript;
+    if ((expectedBvid !== undefined && savedTranscript.bvid !== expectedBvid)
+      || (expectedPage !== undefined && savedTranscript.page !== expectedPage)) {
+      throw new Error("guide workspace Transcript 不属于请求 BV/P。");
+    }
     return { ...workspace, transcript: savedTranscript };
   };
 
@@ -366,6 +400,15 @@ export function App({ tabId }: { tabId: number }) {
     ownerKey: string,
     workspace: { guide?: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[]; transcript?: Transcript } | undefined,
   ) => {
+    const owner = JSON.parse(ownerKey) as [number, string, string, number];
+    const expectedBvid = owner[2]; const expectedPage = owner[3];
+    if (workspace?.transcript
+      && (workspace.transcript.bvid !== expectedBvid || workspace.transcript.page !== expectedPage)) {
+      throw new Error("拒绝应用不属于当前 BV/P 的 workspace。");
+    }
+    if (workspace?.guide && workspace.transcript?.revision_id !== workspace.guide.revision_id) {
+      throw new Error("拒绝应用指南与字幕 revision 不一致的 workspace。");
+    }
     const latestAttempts: Record<string, ReflectionAttempt> = {};
     const restoredFeedbacks: Record<string, Feedback> = {};
     const restoredResponses: Record<string, string> = {};
@@ -443,40 +486,48 @@ export function App({ tabId }: { tabId: number }) {
   };
 
   const prepareTrack = async (checked: Inspection, track: Track, ownerKey: string) => {
+    const operationId = `transcript:${ownerKey}`;
+    if (operations.current.has(operationId)) return undefined;
+    operations.current.add(operationId);
     const ownerLibrary = library;
-    if (activeVideoKey.current === ownerKey) {
-      setPending("transcript"); setStatus("正在加载并保存字幕时间轴…");
+    try {
+      if (activeVideoKey.current === ownerKey) {
+        setPending("transcript"); setStatus("正在加载并保存字幕时间轴…");
+      }
+      const accepted = await localApi(DefaultService.prepareTranscript({
+        bvid: checked.bvid, page: checked.page,
+        requestBody: {
+          library: ownerLibrary, inspect_job_id: checked.inspect_job_id,
+          track_id: track.track_id, track_language: track.language,
+          track_display_name: track.display_name,
+          track_kind: track.kind as TranscriptPrepareRequest.track_kind,
+        },
+      }));
+      const job = await trackJob(accepted.job_id, ownerKey);
+      if (job.status !== "succeeded") throw jobError(job, "字幕加载失败");
+      if (job.result?.bvid !== checked.bvid || job.result?.page !== checked.page) {
+        throw new Error("字幕任务返回了不属于当前分集的结果。");
+      }
+      const loaded = await localApi(DefaultService.getTranscript({
+        revisionId: String(job.result.revision_id), library: ownerLibrary,
+      })) as Transcript;
+      if (loaded.bvid !== checked.bvid || loaded.page !== checked.page) {
+        throw new Error("字幕 revision 与当前分集不匹配。");
+      }
+      if (activeVideoKey.current === ownerKey) {
+        setPreparedTranscript(loaded); setShowGuideTranscript(false);
+        setStatus("字幕已加载，可在字幕页查看。");
+      } else {
+        const saved = sessions.current.get(ownerKey) ?? snapshot.current;
+        sessions.current.set(ownerKey, {
+          ...saved, preparedTranscript: loaded, status: "字幕已加载，可在字幕页查看。",
+        });
+      }
+      return loaded;
+    } finally {
+      operations.current.delete(operationId);
+      finishOwner(ownerKey);
     }
-    const accepted = await localApi(DefaultService.prepareTranscript({
-      bvid: checked.bvid, page: checked.page,
-      requestBody: {
-        library: ownerLibrary, inspect_job_id: checked.inspect_job_id,
-        track_id: track.track_id, track_language: track.language,
-        track_display_name: track.display_name,
-        track_kind: track.kind as TranscriptPrepareRequest.track_kind,
-      },
-    }));
-    const job = await trackJob(accepted.job_id, ownerKey);
-    if (job.status !== "succeeded") throw jobError(job, "字幕加载失败");
-    if (job.result?.bvid !== checked.bvid || job.result?.page !== checked.page) {
-      throw new Error("字幕任务返回了不属于当前分集的结果。");
-    }
-    const loaded = await localApi(DefaultService.getTranscript({
-      revisionId: String(job.result.revision_id), library: ownerLibrary,
-    })) as Transcript;
-    if (loaded.bvid !== checked.bvid || loaded.page !== checked.page) {
-      throw new Error("字幕 revision 与当前分集不匹配。");
-    }
-    if (activeVideoKey.current === ownerKey) {
-      setPreparedTranscript(loaded); setShowGuideTranscript(false);
-      setStatus("字幕已加载，可在字幕页查看。");
-    } else {
-      const saved = sessions.current.get(ownerKey) ?? snapshot.current;
-      sessions.current.set(ownerKey, {
-        ...saved, preparedTranscript: loaded, status: "字幕已加载，可在字幕页查看。",
-      });
-    }
-    return loaded;
   };
 
   const inspect = async () => {
@@ -484,6 +535,9 @@ export function App({ tabId }: { tabId: number }) {
     const expectedBvid = video.bvid; const expectedPage = video.page;
     if (!expectedBvid || !expectedPage || !library || !ownerKey
       || video.identity_state === "transitioning" || video.identity_state === "ambiguous") return;
+    const operationId = `inspect:${ownerKey}`;
+    if (operations.current.has(operationId)) return;
+    operations.current.add(operationId);
     setPending("inspect"); setJobProgress(undefined); setStatus("正在检查视频与字幕轨道…");
     try {
       const accepted = await localApi(DefaultService.inspectVideo({ requestBody: {
@@ -507,7 +561,11 @@ export function App({ tabId }: { tabId: number }) {
       const firstTrack = result.tracks[0];
       if (activeVideoKey.current === ownerKey) {
         setInspection(result); setTrackId(firstTrack?.track_id); setPreparedTranscript(undefined);
-        setStatus(result.subtitle_status === "no_subtitles" ? "当前分集没有可见字幕。" : `发现 ${result.tracks.length} 条字幕轨道。`);
+        setStatus(result.subtitle_status === "no_subtitles"
+          ? "当前分集没有可见字幕。"
+          : result.support_status === "conditional"
+            ? `已有账号权限可用，发现 ${result.tracks.length} 条字幕轨道。`
+            : `发现 ${result.tracks.length} 条字幕轨道。`);
       } else {
         const saved = sessions.current.get(ownerKey) ?? snapshot.current;
         sessions.current.set(ownerKey, {
@@ -518,7 +576,7 @@ export function App({ tabId }: { tabId: number }) {
       if (result.tracks.length === 1 && firstTrack) await prepareTrack(result, firstTrack, ownerKey);
     } catch (error) {
       if (activeVideoKey.current === ownerKey) setStatus(errorText(error));
-    } finally { finishOwner(ownerKey); }
+    } finally { operations.current.delete(operationId); finishOwner(ownerKey); }
   };
 
   const generateGuide = async (regenerate = false, confirmed = false) => {
@@ -551,7 +609,9 @@ export function App({ tabId }: { tabId: number }) {
         || job.result?.revision_id !== selectedRevision.revision_id) {
         throw new Error("生成任务返回了不属于确认来源的结果。");
       }
-      const generated = await fetchGuideWorkspace(String(job.result?.guide_id), ownerLibrary);
+      const generated = await fetchGuideWorkspace(
+        String(job.result?.guide_id), ownerLibrary, selectedRevision.bvid, selectedRevision.page,
+      );
       applyWorkspace(operationKey, generated);
       if (activeVideoKey.current === operationKey) {
         setPracticeChapterId(""); setView({ kind: "outline" }); setStatus("轻量学习大纲已就绪。");
@@ -676,7 +736,9 @@ export function App({ tabId }: { tabId: number }) {
     () => guide ? activeChapter(guide.chapters, video.currentTimeMs) : undefined,
     [guide, video.currentTimeMs],
   );
-  const displayedTranscript = showGuideTranscript ? transcript : (preparedTranscript ?? transcript);
+  const selectedTranscript = showGuideTranscript ? transcript : (preparedTranscript ?? transcript);
+  const displayedTranscript = selectedTranscript !== undefined && selectedTranscript.bvid === video.bvid
+    && selectedTranscript.page === video.page ? selectedTranscript : undefined;
   const displayedSourceAttested = displayedTranscript?.source_verification === "verified"
     && Boolean(displayedTranscript.inspection_job_id);
   const currentCue = useMemo(
@@ -733,21 +795,24 @@ export function App({ tabId }: { tabId: number }) {
           {video.identity_state === "transitioning" || video.identity_state === "ambiguous"
             ? <p>播放器正在切换选集，来源尚未稳定，请稍候。</p>
             : <p><code>{video.bvid}</code> · {video.identity_evidence === "video_pod_item"
-              ? `选集第 ${video.collection_index ?? "?"} 项${video.collection_total ? ` / ${video.collection_total}` : ""}`
-              : `P${video.page}`} · {formatTime(video.currentTimeMs)}</p>}
+              && video.collection_index !== undefined && video.collection_total !== undefined
+              ? `合集第 ${video.collection_index} / ${video.collection_total} 项 · ` : ""}
+              P{video.page} · {formatTime(video.currentTimeMs)}</p>}
           <label>知识库<select value={library} onChange={(event) => setLibrary(event.target.value)}>{libraries.map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
           <label>Provider<input value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="已配置的名称" /></label>
           <button disabled={Boolean(pending) || !library || !activeScope} onClick={inspect}>检查字幕</button>
         </>}
       </section>
-      {inspection && <section><h2>字幕轨道</h2>{inspection.tracks.length === 0 ? <p>当前分集没有可见字幕。</p> : <>
+      {inspection && <section><h2>字幕轨道</h2>
+        <p>{inspection.container_type === "ugc_season" ? "UGC 合集当前项" : "普通 UGC"}{inspection.access_mode === "entitled" ? " · 已有权限" : ""}</p>
+        {inspection.tracks.length === 0 ? <p>当前分集没有可见字幕。</p> : <>
         <select value={trackId} onChange={(event) => setTrackId(event.target.value)}>{inspection.tracks.map((track) => <option key={track.track_id} value={track.track_id}>{track.display_name} · {track.kind}</option>)}</select>
         <button disabled={Boolean(pending) || !trackId} onClick={() => {
           const selected = inspection.tracks.find((item) => item.track_id === trackId);
-          if (selected && activeVideoKey.current) void prepareTrack(inspection, selected, activeVideoKey.current)
-            .catch((error) => setStatus(errorText(error))).finally(() => {
-              if (activeVideoKey.current) finishOwner(activeVideoKey.current);
-            });
+          if (selected && activeVideoKey.current) {
+            void prepareTrack(inspection, selected, activeVideoKey.current)
+              .catch((error) => setStatus(errorText(error)));
+          }
         }}>加载字幕</button>
         {(preparedTranscript || (!guide && transcript)) && <button disabled={Boolean(pending) || workspaceStatus === "loading"} onClick={() => generateGuide(false)}>创建轻量学习大纲</button>}
       </>}</section>}

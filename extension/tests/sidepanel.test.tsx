@@ -149,6 +149,40 @@ afterEach(async () => {
   mocks.localApi.mockReset();
 });
 
+it("shows both the global collection position and the selected P", async () => {
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const sendMessage = chrome.tabs.sendMessage as ReturnType<typeof vi.fn>;
+  const context = {
+    supported: true, bvid: "BV1yANy6mEWe", page: 6, currentTimeMs: 12_000,
+    identity_state: "resolved", identity_evidence: "video_pod_item",
+    collection_index: 30, collection_total: 64,
+  };
+  sendMessage.mockResolvedValue(context);
+  await flush(() => listener({ type: "video-navigation", tabId: 1, context }));
+  await flush();
+
+  expect(container.textContent).toContain("BV1yANy6mEWe");
+  expect(container.textContent).toContain("合集第 30 / 64 项 · P6 · 0:12");
+});
+
+it("uses one coherent waiting status while a supported page is transitioning", async () => {
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const sendMessage = chrome.tabs.sendMessage as ReturnType<typeof vi.fn>;
+  const context = {
+    supported: true, identity_state: "transitioning", currentTimeMs: 0,
+  };
+  sendMessage.mockResolvedValue(context);
+  await flush(() => listener({ type: "video-navigation", tabId: 1, context }));
+  await flush();
+
+  expect(container.textContent).toContain("正在确认当前视频分集");
+  expect(container.textContent).toContain("播放器正在切换选集");
+  expect(container.textContent).not.toContain("请打开受支持的视频页");
+  expect(button("检查字幕").disabled).toBe(true);
+});
+
 it("keeps outline, practice, and notes on separate pages", async () => {
   await flush(() => button("检查字幕").click());
   await flush(() => button("创建轻量学习大纲").click());
@@ -348,4 +382,78 @@ it("writes a late P1 inspection back to P1 after switching to P2", async () => {
     context: { supported: true, bvid: "BV1xx411c7mD", page: 1, currentTimeMs: 0 },
   }));
   expect(container.textContent).toContain("P1专属");
+});
+
+it("ignores an older video-context poll that returns after a newer navigation", async () => {
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const sendMessage = chrome.tabs.sendMessage as ReturnType<typeof vi.fn>;
+  let resolveOld: ((value: unknown) => void) | undefined;
+  let resolveNew: ((value: unknown) => void) | undefined;
+  sendMessage
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve; }));
+
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1xx411c7mD", page: 2, currentTimeMs: 0 },
+  }));
+  await flush(() => listener({
+    type: "video-navigation", tabId: 1,
+    context: { supported: true, bvid: "BV1yy411c7mD", page: 3, currentTimeMs: 0 },
+  }));
+  await flush(() => resolveNew?.({
+    supported: true, bvid: "BV1yy411c7mD", page: 3, currentTimeMs: 0,
+  }));
+  await flush(() => resolveOld?.({
+    supported: true, bvid: "BV1xx411c7mD", page: 2, currentTimeMs: 0,
+  }));
+
+  expect(container.textContent).toContain("BV1yy411c7mD");
+  expect(container.textContent).toContain("P3");
+  expect(container.textContent).not.toContain("P2");
+});
+
+it("rejects a guide workspace whose transcript belongs to another BV/P", async () => {
+  const original = mocks.localApi.getMockImplementation()!;
+  mocks.localApi.mockImplementation(async (request: { operation: string; args?: any }) => {
+    if (request.operation === "workspace") return {
+      bvid: request.args?.bvid, page: request.args?.page,
+      guide_id: "guide-1", revision_id: "revision-1",
+    };
+    if (request.operation === "guide-workspace") return { guide, notes: [], reflections: [] };
+    if (request.operation === "transcript") return transcript;
+    return original(request);
+  });
+  const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
+    .mock.calls[0]![0] as (message: unknown) => void;
+  const context = { supported: true, bvid: "BV1yy411c7mD", page: 2, currentTimeMs: 0 };
+  (chrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(context);
+  await flush(() => listener({ type: "video-navigation", tabId: 1, context }));
+  await flush();
+
+  expect(container.textContent).toContain("读取已有学习记录失败");
+  expect(container.textContent).not.toContain("主要章节");
+});
+
+it("synchronously deduplicates repeated inspect clicks", async () => {
+  const original = mocks.localApi.getMockImplementation()!;
+  let finishInspection: ((value: unknown) => void) | undefined;
+  mocks.localApi.mockImplementation(async (request: { operation: string; jobId?: string }) => {
+    if (request.operation === "job" && request.jobId === "inspect-job") {
+      return new Promise((resolve) => { finishInspection = resolve; });
+    }
+    return original(request);
+  });
+  await flush(() => {
+    button("检查字幕").click();
+    button("检查字幕").click();
+  });
+  const inspectCalls = mocks.localApi.mock.calls
+    .filter(([request]) => request.operation === "inspect");
+  expect(inspectCalls).toHaveLength(1);
+  await flush(() => finishInspection?.({
+    status: "succeeded", progress: { phase: "completed", percent: 100 },
+    result: { bvid: "BV1xx411c7mD", page: 1, subtitle_status: "no_subtitles", tracks: [] },
+  }));
 });

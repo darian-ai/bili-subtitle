@@ -9,7 +9,7 @@
 | 1 | 用户确认独立会话；环境未补录 | 已完成 | P10-001 | 修复完成，待复验 |
 | 2 | 用户确认独立会话；环境未补录 | 已完成 | P10-002、P10-004 | 首次修复复验失败；重新修复完成，待再次复验 |
 | 3 | 用户确认独立会话；环境未补录 | 已完成 | P10-003 | 修复完成，待复验 |
-| 4 | Chrome；长视频；`video-pod` 多 BV 选集；AI 单轨 | 未完成 | P10-002（重开）、P10-005、P10-006、P10-007 | 重启服务并重载扩展后，选集编号和切换门禁通过；首次字幕加载失败，重试虽成功但正文仍错配；旧 content script 另产生 context invalidated 异常 |
+| 4 | Chrome；长视频；`video-pod` 多 BV 选集；AI 单轨 | 未完成 | P10-001、P10-002（重开）、P10-005、P10-006、P10-007 | 服务重启后首个视频正确；继续打开其他 BV/P 时出现已保存字幕正文错配或永久 transitioning。已定位旧播放器接口、描述符回退和过严 DOM 完整性门禁，待本轮修复复验 |
 | 5 | 真正同 BV 多 P、Edge、服务重启、人工/多轨及三标签页按剩余覆盖组合执行 | 待执行 | 待记录 | 待执行；覆盖不足时增加第 6 次 |
 
 问题清单必须区分阻断、重要、一般和已知限制。阻断/重要问题在发布前关闭；接受限制必须说明影响、规避方式和延后阶段。
@@ -31,14 +31,22 @@
 
 ## 多 P 强绑定与字幕时间轴
 
-- 以固定 DOM 覆盖显式 URL P、同 BV 多 P pod、`video-pod` 三个不同 BV 的激活项、仅 DOM 激活变化、URL/选集/播放器冲突和过渡完成；冲突期间三个来源操作均禁用，同 BV 序号必须解析为 P，多 BV 集合序号不得显示为 P。
+- 以固定 DOM 覆盖显式 URL P、同 BV 多 P pod、`video-pod` 三个不同 BV 的激活项、外层 `.active`、`.head.active` 与内层 `.simple-base-item.active` 三种合集选中标记、仅 DOM 激活变化、metadata 次要标签残留、播放器菜单缺失、URL/选集/播放器冲突和过渡完成；单 P 合集播放器序号与合集位置一致时必须解析为 P1，多 P 合集播放器序号与内部 P 一致时必须解析；真实冲突期间来源操作均禁用，同 BV 序号必须解析为 P，多 BV 集合序号不得显示为 P。
 - 人为延迟 P1 的检查、Transcript 准备和生成，期间切换 P2；P1 结果只能回写 P1 scope，P2 在取得自身正确 revision 前生成按钮保持门禁。
-- Transcript 准备请求 schema 不含 AID/CID/标题但必须含成功 inspect job ID；错误 job、知识库、BV/P、轨道或重新解析 CID 返回 `inspection_source_mismatch`。播放器轨道请求断言 AID/BVID/CID、no-cache 与响应身份完全一致；不一致不保存。连续加载三个不同 BV 的字幕正文不得复用，字幕页逐项显示 BV/P/CID/inspect job。
+- Transcript 准备请求 schema 不含 AID/CID/标题但必须含成功 inspect job ID；错误 job、知识库、BV/P 或重新解析 CID 返回 `inspection_source_mismatch`。固定时间与 key 验证 WBI 参数排序、字符过滤、`wts`/`w_rid`，签名失败刷新 key 后只重试一次。播放器轨道请求必须命中 `/x/player/wbi/v2` 并断言 AID/BVID/CID、no-cache 与响应身份完全一致；不一致不保存。
+- inspect 后 WBI 返回相同描述但不同轨道 ID 时必须返回 `subtitle_track_unavailable`，不得下载正文。连续加载三个不同 BV/P 的字幕正文不得复用；模拟旧接口“外层身份正确但轨道和正文轮换”的响应必须被精确 ID 门禁拒绝。
 - workspace 同时覆盖“只有 Transcript、没有指南”和“已有指南”页面；Transcript-only 点击创建必须出现确认且确认前生成 POST 为零。已有指南加载新字幕后默认显示新 revision，可明确切回指南绑定 revision，旧指南保持不变。
 - 覆盖 cue 起止边界、间隙无高亮和重叠取最后开始 cue；手动滚动暂停跟随、按钮恢复、点击只 seek 不 pause。
 - 使用长 cue 固定数据验证完整 DOM 语义、`content-visibility` 延迟渲染、窄侧栏无横向溢出，以及列表、按钮和确认面板的键盘/ARIA 行为。
-- 所有 workspace/job 结果应用前断言 BV/P/revision 与启动 owner 一致；错来源结果保持旧指南且显示稳定错误。
+- 所有 workspace/job 结果应用前断言 BV/P/revision 与启动 owner 一致；人为乱序返回连续两次视频上下文轮询，旧响应不得覆盖新页面。guide workspace 绑定 Transcript 与请求 BV/P 不一致时保持旧指南并显示稳定错误。
 - 旧 payload 读取为 `legacy_unverified` 并显示警告；仅 BV/P/CID/hash 完全一致的重新下载可升级证明，正文、revision 与证据逐字不变。
+
+## 视频类型边界
+
+- 固定平台响应覆盖普通单 P/多 P、`ugc_season` 当前项、已有权限 UGC、互动、Story、首映、仅预览和关键分类字段缺失；后三类及未知类型必须在字幕适配器调用前失败。
+- URL 单测拒绝 bangumi、cheese、live、festival、medialist、空间列表和非 Bilibili 域名；标准 `/video/BV...` 仅作为候选，服务端拒绝后不得保留旧检查结果或启用生成。
+- inspect schema v2 对普通视频返回 `supported`，对已有权限内容返回 `conditional + existing_entitlement_required`，对合集当前项返回 `current_item_only`；无字幕保持受支持类型并返回独立状态。
+- Chrome/Edge 真实验收至少分别覆盖普通多 P、UGC 合集当前项和一个明确拒绝类型；已有权限场景只使用账号已经合法可见的内容，不执行购买或解锁。
 
 ## 任务取消、恢复与重试
 
@@ -71,6 +79,12 @@
 - 全部交互可用键盘完成；焦点顺序、可见焦点、标题层级、label、ARIA live、对比度和 reduced-motion 通过审计。
 - 未经点击不上传、不生成、不清理缓存、不自动暂停或强制答题。
 - 在视频页保持打开时重载扩展，旧 content script 应立即停止 observer/定时器/runtime 消息；控制台不得出现未捕获的 `Extension context invalidated`，新实例仍能报告当前来源。
+
+## 本轮测试数据重置
+
+- WBI、精确轨道和来源门禁自动化全部通过后停止本地服务，事务清空并压缩测试期全局 `api.sqlite3` 与当前注册测试库的 `study.sqlite3`，再启动服务；所有学习数据与任务表必须为零。
+- 不删除 `libraries.json`、Bilibili Credential Manager 凭据、Provider 配置或导出 Markdown；重载扩展以清除内存 session。
+- 空库重启后依次打开同 BV 多 P、多 BV 合集和普通视频，所有字幕必须重新下载；数据库不得出现同一 BV/P/CID 对应互不相干正文的 revision。
 
 ## 真实脱敏验收与发布
 

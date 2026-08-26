@@ -14,10 +14,23 @@ from bili_subtitle.domain.models import SubtitleTrack, SubtitleTrackKind
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 
 SIGNED = "https://aisubtitle.hdslb.com/bfs/subtitle/fake.json?token=FAKE_SIGNATURE_CANARY"
+WBI_IMG = "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png"
+WBI_SUB = "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"
 
 
 def _client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
-    return httpx.Client(transport=httpx.MockTransport(handler))
+    def routed(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {"wbi_img": {"img_url": WBI_IMG, "sub_url": WBI_SUB}},
+                },
+            )
+        return handler(request)
+
+    return httpx.Client(transport=httpx.MockTransport(routed))
 
 
 def test_discovers_in_order_and_immediately_downloads_raw_bytes() -> None:
@@ -26,7 +39,7 @@ def test_discovers_in_order_and_immediately_downloads_raw_bytes() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        if request.url.path == "/x/player/v2":
+        if request.url.path == "/x/player/wbi/v2":
             return httpx.Response(
                 200,
                 json={
@@ -89,8 +102,98 @@ def test_discovery_sends_complete_identity_without_cache_and_rejects_mismatch() 
     with pytest.raises(SubtitlePlatformResponseError, match="来源"):
         adapter.discover(bvid="BV1xx411c7mD", cid=8, aid=7)
     request = requests[0]
-    assert dict(request.url.params) == {"bvid": "BV1xx411c7mD", "cid": "8", "aid": "7"}
+    params = dict(request.url.params)
+    assert {key: params[key] for key in ("aid", "cid")} == {"aid": "7", "cid": "8"}
+    assert len(params["w_rid"]) == 32 and int(params["wts"]) > 0
     assert request.headers["cache-control"] == "no-cache"
+    assert request.headers["referer"] == "https://www.bilibili.com/video/BV1xx411c7mD"
+
+
+def test_wbi_signature_is_deterministic_and_key_is_cached() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "aid": 7,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 8,
+                    "subtitle": {
+                        "subtitles": [
+                            {
+                                "id": 1,
+                                "lan": "zh-CN",
+                                "lan_doc": "中文",
+                                "type": 0,
+                                "subtitle_url": SIGNED,
+                            }
+                        ]
+                    },
+                },
+            },
+        )
+
+    adapter = BilibiliSubtitleAdapter(_client(handler), clock=lambda: 1_720_000_000)
+    adapter.discover(bvid="BV1xx411c7mD", cid=8, aid=7)
+    adapter.discover(bvid="BV1xx411c7mD", cid=8, aid=7)
+
+    assert len(requests) == 2
+    assert all(request.url.path == "/x/player/wbi/v2" for request in requests)
+    assert dict(requests[0].url.params) == {
+        "cid": "8",
+        "aid": "7",
+        "wts": "1720000000",
+        "w_rid": "5710fb53e41d94277d8d202daa256a3a",
+    }
+
+
+def test_wbi_signature_failure_refreshes_key_and_retries_once() -> None:
+    nav_calls = 0
+    player_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal nav_calls, player_calls
+        if request.url.path == "/x/web-interface/nav":
+            nav_calls += 1
+            suffix = "4932caff0ff746eab6f01bf08b70ac45" if nav_calls == 1 else "a" * 32
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": WBI_IMG,
+                            "sub_url": f"https://i0.hdslb.com/{suffix}.png",
+                        }
+                    },
+                },
+            )
+        player_calls += 1
+        if player_calls == 1:
+            return httpx.Response(200, json={"code": -352})
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "aid": 7,
+                    "bvid": "BV1xx411c7mD",
+                    "cid": 8,
+                    "subtitle": {"subtitles": []},
+                },
+            },
+        )
+
+    adapter = BilibiliSubtitleAdapter(
+        httpx.Client(transport=httpx.MockTransport(handler)), clock=lambda: 1_720_000_000
+    )
+    with pytest.raises(NoSubtitles):
+        adapter.discover(bvid="BV1xx411c7mD", cid=8, aid=7)
+    assert (nav_calls, player_calls) == (2, 2)
 
 
 def test_discovers_current_player_track_schema_without_legacy_is_ai() -> None:
@@ -277,7 +380,7 @@ def test_malformed_discovery_is_not_no_subtitles(payload: object) -> None:
 )
 def test_malformed_body_is_classified_without_raw_content(body: bytes) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/x/player/v2":
+        if request.url.path == "/x/player/wbi/v2":
             return httpx.Response(
                 200,
                 json={
@@ -313,7 +416,7 @@ def test_protocol_relative_url_is_https_and_consumed_without_retention() -> None
     requested_subtitle_urls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/x/player/v2":
+        if request.url.path == "/x/player/wbi/v2":
             return httpx.Response(
                 200,
                 json={

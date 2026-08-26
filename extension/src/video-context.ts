@@ -9,12 +9,31 @@ export interface VideoContext {
   currentTimeMs: number;
 }
 
-export interface VideoPodSnapshot {
-  selectedBvid?: string;
-  selectedIndex?: number;
-  total?: number;
-  playerIndex?: number;
-  distinctBvidCount?: number;
+export interface VideoDomIdentity { bvid: string; page: number }
+
+export type VideoPodSnapshot =
+  | { kind: "loading" }
+  | {
+    kind: "pages";
+    selectedPage?: number;
+    selectedCid?: string;
+    playerPage?: number;
+    playerCid?: string;
+  }
+  | {
+    kind: "collection";
+    selectedBvid?: string;
+    selectedPage?: number;
+    multiplePages?: boolean;
+    playerPage?: number;
+    collectionIndex?: number;
+    collectionTotal?: number;
+  };
+
+export interface VideoDomSnapshot {
+  metadata?: VideoDomIdentity;
+  metadataConflict?: boolean;
+  pod?: VideoPodSnapshot;
 }
 
 export function isSupportedVideoUrl(url: string | undefined): boolean {
@@ -33,7 +52,7 @@ export function parseVideoContext(url: string, currentTimeSeconds = 0): VideoCon
 export function resolveVideoContext(
   url: string,
   currentTimeSeconds = 0,
-  pod?: VideoPodSnapshot,
+  dom?: VideoDomSnapshot,
 ): VideoContext {
   const parsed = new URL(url);
   const match = /^\/video\/(BV[A-Za-z0-9]{10})(?:\/|$)/.exec(parsed.pathname);
@@ -46,37 +65,54 @@ export function resolveVideoContext(
   if (!Number.isSafeInteger(rawPage) || rawPage < 1) {
     return { supported: true, identity_state: "ambiguous", currentTimeMs };
   }
-  if (pod !== undefined && !pod.selectedBvid) {
+  if (dom?.metadataConflict) {
     return { supported: true, identity_state: "transitioning", currentTimeMs };
   }
-  if (pod?.selectedBvid) {
-    const validPodBvid = /^BV[A-Za-z0-9]{10}$/.test(pod.selectedBvid);
-    const indexConflict = pod.selectedIndex !== undefined && pod.playerIndex !== undefined
-      && pod.selectedIndex !== pod.playerIndex;
-    if (!validPodBvid) return { supported: true, identity_state: "ambiguous", currentTimeMs };
-    const sameBvidPages = pod.distinctBvidCount === 1 && pod.selectedIndex !== undefined;
-    const resolvedPage = sameBvidPages ? pod.selectedIndex! + 1 : rawPage;
-    const urlPageConflict = sameBvidPages && pageValue !== null && rawPage !== resolvedPage;
-    if (match[1] !== pod.selectedBvid || indexConflict) {
+  if (dom?.metadata
+    && (dom.metadata.bvid !== match[1] || dom.metadata.page !== rawPage)) {
+    return { supported: true, identity_state: "transitioning", currentTimeMs };
+  }
+  const pod = dom?.pod;
+  if (pod?.kind === "loading") {
+    return { supported: true, identity_state: "transitioning", currentTimeMs };
+  }
+  if (pod?.kind === "pages") {
+    if (pod.selectedPage === undefined || pod.selectedPage !== rawPage
+      || (pod.playerPage !== undefined && pod.playerPage !== pod.selectedPage)
+      || (pod.selectedCid !== undefined && pod.playerCid !== undefined
+        && pod.playerCid !== pod.selectedCid)) {
+      return { supported: true, identity_state: "transitioning", currentTimeMs };
+    }
+    return {
+      supported: true, bvid: match[1], page: pod.selectedPage,
+      identity_state: "resolved", identity_evidence: "video_pod_page", currentTimeMs,
+    };
+  }
+  if (pod?.kind === "collection") {
+    if (pod.selectedBvid === undefined || pod.selectedPage === undefined) {
       return {
         supported: true, identity_state: "transitioning", currentTimeMs,
-        ...(pod.selectedIndex === undefined ? {} : { collection_index: pod.selectedIndex + 1 }),
-        ...(pod.total === undefined ? {} : { collection_total: pod.total }),
+        ...(pod.collectionIndex === undefined ? {} : { collection_index: pod.collectionIndex }),
+        ...(pod.collectionTotal === undefined ? {} : { collection_total: pod.collectionTotal }),
       };
     }
-    if (urlPageConflict) {
+    const playerConflict = pod.playerPage !== undefined && (pod.multiplePages
+      ? pod.playerPage !== pod.selectedPage
+      : pod.collectionIndex !== undefined && pod.playerPage !== pod.collectionIndex);
+    const conflict = pod.selectedBvid !== match[1] || pod.selectedPage !== rawPage
+      || playerConflict;
+    if (conflict) {
       return {
         supported: true, identity_state: "transitioning", currentTimeMs,
-        page: resolvedPage,
+        ...(pod.collectionIndex === undefined ? {} : { collection_index: pod.collectionIndex }),
+        ...(pod.collectionTotal === undefined ? {} : { collection_total: pod.collectionTotal }),
       };
     }
     return {
-      supported: true, bvid: pod.selectedBvid, page: resolvedPage,
-      identity_state: "resolved",
-      identity_evidence: sameBvidPages ? "video_pod_page" : "video_pod_item",
-      ...(sameBvidPages || pod.selectedIndex === undefined
-        ? {} : { collection_index: pod.selectedIndex + 1 }),
-      ...(sameBvidPages || pod.total === undefined ? {} : { collection_total: pod.total }),
+      supported: true, bvid: pod.selectedBvid, page: pod.selectedPage,
+      identity_state: "resolved", identity_evidence: "video_pod_item",
+      ...(pod.collectionIndex === undefined ? {} : { collection_index: pod.collectionIndex }),
+      ...(pod.collectionTotal === undefined ? {} : { collection_total: pod.collectionTotal }),
       currentTimeMs,
     };
   }

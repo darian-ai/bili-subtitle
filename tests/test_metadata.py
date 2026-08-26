@@ -7,12 +7,22 @@ import pytest
 from bili_subtitle.application.input_parser import VideoReference
 from bili_subtitle.application.metadata import resolve_selection
 from bili_subtitle.domain.errors import (
+    AccessDeniedError,
     InputError,
     InvalidPageError,
     PlatformResponseError,
     RedirectError,
+    UnsupportedVideoType,
+    VideoNotReadyError,
 )
-from bili_subtitle.domain.models import SelectionSource, VideoMetadata, VideoPage
+from bili_subtitle.domain.models import (
+    SelectionSource,
+    VideoAccessMode,
+    VideoCapabilities,
+    VideoMetadata,
+    VideoPage,
+    VideoType,
+)
 
 
 @dataclass
@@ -103,3 +113,37 @@ def test_domain_models_reject_invalid_platform_values(video: VideoMetadata) -> N
         VideoMetadata(1, "BV1xx411c7mD", "bad", (video.pages[0], video.pages[0]))
     with pytest.raises(PlatformResponseError):
         VideoMetadata(1, "BVbad", "bad", video.pages)
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "error"),
+    [
+        (VideoCapabilities(video_type=VideoType.INTERACTIVE_UGC), UnsupportedVideoType),
+        (VideoCapabilities(video_type=VideoType.STORY_UGC), UnsupportedVideoType),
+        (VideoCapabilities(video_type=VideoType.UNKNOWN), UnsupportedVideoType),
+        (VideoCapabilities(premiere=True), VideoNotReadyError),
+        (VideoCapabilities(access_mode=VideoAccessMode.PREVIEW), AccessDeniedError),
+    ],
+)
+def test_rejects_unsupported_video_capabilities(
+    video: VideoMetadata,
+    capabilities: VideoCapabilities,
+    error: type[Exception],
+) -> None:
+    classified = VideoMetadata(video.aid, video.bvid, video.title, video.pages, capabilities)
+    with pytest.raises(error):
+        resolve_selection(video.bvid, page=1, all_pages=False, metadata=FakeMetadata(classified))
+
+
+def test_allows_entitled_standard_ugc(video: VideoMetadata) -> None:
+    classified = VideoMetadata(
+        video.aid,
+        video.bvid,
+        video.title,
+        video.pages,
+        VideoCapabilities(access_mode=VideoAccessMode.ENTITLED),
+    )
+    result = resolve_selection(
+        video.bvid, page=1, all_pages=False, metadata=FakeMetadata(classified)
+    )
+    assert result.video.capabilities.access_mode is VideoAccessMode.ENTITLED

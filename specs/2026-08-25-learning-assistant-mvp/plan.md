@@ -5,12 +5,12 @@
 - [ ] 按 [`validation.md`](./validation.md) 的脱敏模板完成五次完整学习会话，不与阶段九验收混算。
 - [ ] 将问题按阻断、重要、一般和已知限制分类，更新需求与验收后才开始编码。
 
-已冻结 P10-001 至 P10-007，其中 P10-001 至 P10-006 为阻断问题，P10-007 为重要问题。第 4 次实测是 Chrome、长视频、`video-pod` 多 BV 选集、AI 单轨；字幕错配使 P10-002 再次打开，另发现 P10-005、P10-006 与扩展重载生命周期问题 P10-007，未完成闭环。剩余真实记录继续覆盖真正同 BV 多 P、Edge、服务重启、人工/多轨和三标签页，必要时增加第 6 次记录；不得用自动化测试替代。
+已冻结 P10-001 至 P10-007，其中 P10-001 至 P10-006 为阻断问题，P10-007 为重要问题。第 4 次实测是 Chrome、长视频、`video-pod` 多 BV 选集、AI 单轨；后续服务重启与跨页面复验确认 P10-001、P10-002 仍未关闭：首个视频可正确加载，但继续打开其他 BV/P 后会保存错配字幕，或永久停在来源 transitioning。只清理测试数据不能代替根因修复。剩余真实记录继续覆盖真正同 BV 多 P、Edge、服务重启、人工/多轨和三标签页，必要时增加第 6 次记录；不得用自动化测试替代。
 
 ### 本轮阻断修复
 
-- [x] P10-001：请求保存字幕轨道的语言、显示名和人工/AI 类型；下载时先匹配原始 ID，ID 轮换后仅允许稳定描述唯一命中，多候选返回独立错误码并要求重选。
-- [ ] P10-002：以 `tabId + library + BV/P` 隔离结果；同 BV 多 P 以 pod 激活序号为 P 并交叉检查 URL，pod 多 BV 使用激活 `data-key` 与播放器序号确认；过渡态禁用操作。字幕准备绑定成功 inspect job，重新解析 AID/CID，并核对无缓存播放器响应中的 AID/BVID/CID；迟到结果只回原 owner。首次真实复验仅通过选集显示与过渡门禁，字幕仍错配，本轮加固后待再次复验。
+- [ ] P10-001：播放器字幕轨道发现改用 `/x/player/wbi/v2` 和当前登录会话的 WBI key；严格核对 AID/BVID/CID。下载阶段只接受 inspect 选中的精确轨道 ID，ID 消失或变化时返回 `subtitle_track_unavailable` 并要求重新检查，禁止按语言、显示名或人工/AI 类型回退。代码、自动化及三个 BV/P 连续真实 WBI 冒烟已通过，待真实侧边栏复验后关闭。旧 `/x/player/v2` 实测会为同一来源返回轮换且属于其他视频的字幕，原“稳定描述唯一回退”结论撤销。
+- [ ] P10-002：以 `tabId + library + BV/P` 隔离结果；同 BV 多 P 以 URL 与 pod 激活序号为主证据，pod 多 BV 使用激活 `data-key` 与页码确认。播放器菜单/CID 只在存在时做冲突检查，缺失不得永久阻塞；metadata 使用明确优先级，次要标签残留不得制造永久冲突。轮询响应、workspace 和生成结果应用前再次核对 owner 与 BV/P，迟到结果只回原作用域。补充兼容 Bilibili 简单合集项将 `.active` 放在 `.simple-base-item` 内层的 DOM 变体；同时区分播放器菜单序号语义：单 P 合集与合集位置比较，多 P 合集才与内部 P 比较。两种变体分别在 `BV1Y9u76aEdy`、`BV1hduL6pEcu` 单标签页复现，证明与多标签页无关。代码与自动化通过后仍待 Chrome/Edge 真实侧边栏复验关闭。
 - [x] P10-003：证据反馈 Prompt 增加明确 `output_schema`，限制反馈证据不得超出问题范围；在模型调用前持久保存原始回答，失败时保留 `feedback_failed` 状态。
 - [ ] P10-004：禁用全局侧栏回退，只为普通 Bilibili 视频标签页启用独立 panel；未点击或不支持页面隐藏，返回已打开标签页自动恢复。代码与自动化已完成，待真实复验。
 - [ ] P10-005：实现排队/在途取消、迟到结果丢弃、重启中断、显式 retry 与 `retry_of`；核心状态机自动化完成，待真实 Provider 和服务重启复验。
@@ -26,6 +26,21 @@
 - [x] 历史 Transcript 默认标记 `legacy_unverified`；仅完全相同来源与哈希允许升级验证标记。
 - [x] 新增完整字幕页、当前 cue 高亮、跟随暂停/恢复、cue 跳转和原生延迟渲染样式。
 - [x] OpenAPI JSON 与 TypeScript client 从 FastAPI 定义重新生成，未手工编辑生成文件。
+
+### 本轮来源一致性修复
+
+- [x] 实现 WBI 参数签名、key 缓存与签名失败后的单次刷新重试；移除旧播放器接口。
+- [x] 将 inspect→prepare 的轨道选择收紧为精确 ID，覆盖“外层身份正确但返回另一同名轨道”的拒绝测试。
+- [x] 重写 DOM metadata 优先级和 pod 判定，使缺少播放器菜单的稳定页面可解析、真实冲突仍保持 transitioning。
+- [x] 为侧栏轮询增加序号门禁，为检查/字幕准备增加同步 in-flight 锁，并拒绝加载不属于请求 BV/P 的 guide workspace。
+- [x] 修复完成并停止服务后，事务清空当前测试期 `api.sqlite3` 与注册测试库的 `study.sqlite3`，保留库注册、凭据、Provider 配置和导出文件；服务已重启且学习表均为零。
+
+### 视频类型边界
+
+- [x] 冻结普通 UGC、同 BV 多 P、UGC 合集当前项和已有权限受限 UGC 的覆盖边界；明确无字幕是能力不可用而非视频类型不支持。
+- [x] 从平台元数据归一视频、容器和访问类型；互动、Story、未知特殊模型、首映中和仅预览内容在字幕访问前失败关闭。
+- [x] inspect job result 升级到 schema v2，返回类型、条件支持和限制字段；扩展增加稳定错误文案与非视频路由测试。
+- [ ] 使用真实普通多 P、UGC 合集当前项、已有权限内容及至少一个明确拒绝类型完成 Chrome/Edge 脱敏复验。
 
 ## 2. 建立 v4 持久化与已有内容查询
 
@@ -77,4 +92,4 @@
 - [ ] 执行 [`validation.md`](./validation.md) 的全量 Python、Extension、E2E、迁移、安全和 V1 回归。
 - [ ] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部通过后更新 Constitution 并发布 `0.2.0`。
 
-本轮自动化结果：Python 287 项通过、覆盖率 90.19%，Ruff format/lint 与 strict Pyright 通过；Extension OpenAPI/client 已从 API 1.3.0 重新生成，TypeScript、ESLint、15 项 Vitest、3 项 Playwright 以及 Chrome/Edge 生产构建通过。第 4 次 Chrome 字幕来源场景再次重跑、真实 Provider 在途取消、服务重启、Edge/多轨和其余 v4/发布门禁仍未关闭。
+本轮自动化结果：Python 289 项通过、覆盖率 90.06%，Ruff format/lint、strict Pyright 与 `git diff --check` 通过；Extension OpenAPI 漂移、TypeScript、ESLint、29 项 Vitest、3 项 Playwright 以及 Chrome/Edge 生产构建通过。三个已知 BV/P 的连续真实 WBI 请求均命中预期轨道与正文；本地服务已在空测试库上重启并通过健康检查。真实侧边栏跨页面复验仍由用户完成，不以本轮自动化替代。

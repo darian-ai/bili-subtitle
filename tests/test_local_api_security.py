@@ -45,7 +45,13 @@ from bili_study.storage import (
     StudyRepository,
     library_database,
 )
-from bili_subtitle.domain.errors import AuthenticationRequired, NoSubtitles
+from bili_subtitle.domain.errors import (
+    AccessDeniedError,
+    AuthenticationRequired,
+    NoSubtitles,
+    UnsupportedVideoType,
+    VideoNotReadyError,
+)
 from bili_subtitle.domain.models import (
     PageSelection,
     SelectionSource,
@@ -53,6 +59,9 @@ from bili_subtitle.domain.models import (
     SubtitleCue,
     SubtitleTrack,
     SubtitleTrackKind,
+    VideoAccessMode,
+    VideoCapabilities,
+    VideoContainerType,
     VideoMetadata,
     VideoPage,
 )
@@ -146,7 +155,7 @@ def test_api_pair_auth_cors_schema_and_personal_note(
     client, headers = paired_client(paths)
     with client:
         health = client.get("/api/v1/health")
-        assert health.json() == {"status": "ok", "api_version": "1.3.0"}
+        assert health.json() == {"status": "ok", "api_version": "1.4.0"}
         assert client.get("/api/v1/libraries", headers={"Origin": ORIGIN}).status_code == 401
         libraries = client.get("/api/v1/libraries", headers=headers)
         assert libraries.status_code == 200 and libraries.json()["libraries"][0]["name"] == "main"
@@ -240,7 +249,7 @@ def test_api_rejects_host_origin_pair_reuse_and_large_request(
 
 def test_openapi_is_versioned_and_declares_bearer_security(paths: AppPaths) -> None:
     schema = create_app(paths=paths).openapi()
-    assert schema["info"]["version"] == "1.3.0"
+    assert schema["info"]["version"] == "1.4.0"
     assert "/api/v1/reflections" in schema["paths"]
     assert "/api/v1/study-guides/{guide_id}/workspace" in schema["paths"]
     assert "/api/v1/videos/{bvid}/pages/{page}/transcripts" in schema["paths"]
@@ -392,6 +401,9 @@ def test_stable_error_codes_do_not_expose_exception_text() -> None:
         == "subtitle_track_unavailable"
     )
     assert stable_error_code(SubtitleTrackAmbiguous("same name")) == "subtitle_track_ambiguous"
+    assert stable_error_code(UnsupportedVideoType("secret")) == "unsupported_video_type"
+    assert stable_error_code(VideoNotReadyError("secret")) == "video_not_ready"
+    assert stable_error_code(AccessDeniedError("secret")) == "video_access_denied"
     assert stable_error_code(RuntimeError("canary-secret")) == "internal_error"
 
 
@@ -739,6 +751,12 @@ def test_platform_inspect_and_transcript_download_adapters(
         paths, {"library": "main", "bvid": "BV1xx411c7mD", "page": 2}
     )
     assert inspected["subtitle_status"] == "available"
+    assert inspected["schema_version"] == 2
+    assert inspected["video_type"] == "standard_ugc"
+    assert inspected["container_type"] == "standalone"
+    assert inspected["access_mode"] == "public"
+    assert inspected["support_status"] == "supported"
+    assert inspected["limitations"] == []
     assert inspected["tracks"] == [
         {
             "track_id": "2080600637229272576",
@@ -802,7 +820,45 @@ def test_platform_inspect_and_transcript_download_adapters(
         )
 
 
-def test_rotated_track_id_uses_only_a_unique_stable_descriptor() -> None:
+def test_platform_inspect_marks_entitled_collection_as_conditional(
+    paths: AppPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = VideoPage(1, 55, "分集")
+    capabilities = VideoCapabilities(
+        container_type=VideoContainerType.UGC_SEASON,
+        access_mode=VideoAccessMode.ENTITLED,
+    )
+    selection = PageSelection(
+        VideoMetadata(1, "BV1xx411c7mD", "标题", (page,), capabilities),
+        (page,),
+        SelectionSource.EXPLICIT_PAGE,
+    )
+    monkeypatch.setattr(api_module, "_platform_client", lambda: (FakePlatformClient(), object()))
+    monkeypatch.setattr(api_module, "resolve_selection", lambda *args, **kwargs: selection)
+
+    class NoSubtitleAdapter:
+        def __init__(self, client: object) -> None:
+            del client
+
+        def discover(self, **kwargs: object) -> tuple[SubtitleTrack, ...]:
+            del kwargs
+            raise NoSubtitles("none")
+
+        def discard_pending(self, **kwargs: object) -> None:
+            del kwargs
+
+    monkeypatch.setattr(api_module, "BilibiliSubtitleAdapter", NoSubtitleAdapter)
+    inspected = api_module._inspect_job(
+        paths, {"library": "main", "bvid": "BV1xx411c7mD", "page": 1}
+    )
+    assert inspected["support_status"] == "conditional"
+    assert inspected["limitations"] == [
+        "current_item_only",
+        "existing_entitlement_required",
+    ]
+
+
+def test_rotated_track_id_is_rejected_even_with_a_unique_stable_descriptor() -> None:
     old_id = "2080600637229272576"
     replacement = SubtitleTrack(9, "zh-CN", "中文", SubtitleTrackKind.HUMAN)
     raw = {
@@ -811,15 +867,15 @@ def test_rotated_track_id_uses_only_a_unique_stable_descriptor() -> None:
         "track_display_name": "中文",
         "track_kind": "human",
     }
-    assert api_module._select_subtitle_track((replacement,), raw) == replacement
+    with pytest.raises(SubtitleTrackUnavailable):
+        api_module._select_subtitle_track((replacement,), raw)
 
-    duplicate = SubtitleTrack(10, "zh-CN", "中文", SubtitleTrackKind.HUMAN)
-    with pytest.raises(SubtitleTrackAmbiguous):
-        api_module._select_subtitle_track((replacement, duplicate), raw)
+    exact = SubtitleTrack(int(old_id), "zh-CN", "中文", SubtitleTrackKind.HUMAN)
+    assert api_module._select_subtitle_track((replacement, exact), raw) == exact
 
     with pytest.raises(SubtitleTrackUnavailable):
         api_module._select_subtitle_track(
-            (SubtitleTrack(11, "en", "English", SubtitleTrackKind.HUMAN),), raw
+            (replacement, SubtitleTrack(10, "zh-CN", "中文", SubtitleTrackKind.HUMAN)), raw
         )
 
 

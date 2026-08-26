@@ -8,9 +8,20 @@ from bili_subtitle.domain.errors import (
     NetworkError,
     PlatformResponseError,
     RedirectError,
+    UnsupportedVideoType,
     VideoNotFoundError,
+    VideoNotReadyError,
 )
-from bili_subtitle.domain.models import PageSelection, SelectionSource, VideoMetadata, VideoPage
+from bili_subtitle.domain.models import (
+    PageSelection,
+    SelectionSource,
+    VideoAccessMode,
+    VideoCapabilities,
+    VideoContainerType,
+    VideoMetadata,
+    VideoPage,
+    VideoType,
+)
 
 __all__ = [
     "AccessDeniedError",
@@ -22,7 +33,13 @@ __all__ = [
     "PlatformResponseError",
     "RedirectError",
     "SelectionSource",
+    "UnsupportedVideoType",
+    "VideoAccessMode",
+    "VideoCapabilities",
+    "VideoContainerType",
     "VideoMetadata",
+    "VideoNotReadyError",
     "VideoNotFoundError",
     "VideoPage",
+    "VideoType",
 ]

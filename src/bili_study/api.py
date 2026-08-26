@@ -21,7 +21,6 @@ from bili_study.domain import (
     DomainError,
     EvidenceRef,
     InspectionSourceMismatch,
-    SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
     TranscriptRevision,
     TranscriptSourceMismatch,
@@ -56,7 +55,7 @@ from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, creat
 from bili_subtitle.infrastructure.credentials import KeyringCredentialStore
 from bili_subtitle.infrastructure.subtitles import BilibiliSubtitleAdapter
 
-API_VERSION = "1.3.0"
+API_VERSION = "1.4.0"
 MAX_REQUEST_BYTES = 1_048_576
 RATE_LIMIT_PER_MINUTE = 120
 
@@ -300,13 +299,35 @@ def _inspect_job(
             adapter.discard_pending(bvid=selection.video.bvid, cid=page.cid)
     progress("validating_tracks", 90)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_id": f"{selection.video.bvid}:p{page.number}",
         "bvid": selection.video.bvid,
         "page": page.number,
         "cid": page.cid,
         "title": selection.video.title,
         "page_title": page.title,
+        "video_type": selection.video.capabilities.video_type.value,
+        "container_type": selection.video.capabilities.container_type.value,
+        "access_mode": selection.video.capabilities.access_mode.value,
+        "support_status": (
+            "conditional"
+            if selection.video.capabilities.access_mode.value == "entitled"
+            else "supported"
+        ),
+        "limitations": [
+            value
+            for enabled, value in (
+                (
+                    selection.video.capabilities.container_type.value == "ugc_season",
+                    "current_item_only",
+                ),
+                (
+                    selection.video.capabilities.access_mode.value == "entitled",
+                    "existing_entitlement_required",
+                ),
+            )
+            if enabled
+        ],
         "subtitle_status": "available" if tracks else "no_subtitles",
         "tracks": [
             {
@@ -325,25 +346,6 @@ def _select_subtitle_track(tracks: tuple[Any, ...], raw: dict[str, Any]):
     exact = next((track for track in tracks if track.track_id == requested_id), None)
     if exact is not None:
         return exact
-
-    descriptors = (
-        raw.get("track_language"),
-        raw.get("track_display_name"),
-        raw.get("track_kind"),
-    )
-    if all(value is not None for value in descriptors):
-        matches = tuple(
-            track
-            for track in tracks
-            if track.language == descriptors[0]
-            and track.display_name == descriptors[1]
-            and track.kind.value == descriptors[2]
-        )
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            raise SubtitleTrackAmbiguous("发现多个同名字幕轨道，请重新选择字幕轨道。")
-
     raise SubtitleTrackUnavailable("选定字幕轨道已不可用，请重新检查视频。")
 
 

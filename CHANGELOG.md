@@ -2,6 +2,7 @@
 
 ## 0.2.0-alpha - 2026-08-25
 
+- 新增普通 UGC、UGC 合集当前项和已有权限内容的视频类型门禁；互动、Story、首映中、仅预览及未知特殊模型在字幕访问前稳定拒绝，inspect API 升级为 1.4.0/schema v2。
 - 新增只监听 `127.0.0.1` 的 FastAPI Local API、版本化 OpenAPI、生成的 TypeScript client，以及 Chrome/Edge 双构建漂移门禁。
 - 新增五分钟单次配对码、扩展 Origin 绑定 Bearer、Host/CORS/Content-Type/schema/正文大小/速率/并发限制。
 - 新增单 worker 持久 job、合法状态转换和服务重启恢复；失败响应使用稳定脱敏分类。

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import httpx
 import pytest
 import respx
@@ -12,6 +14,7 @@ from bili_subtitle.domain.errors import (
     RedirectError,
     VideoNotFoundError,
 )
+from bili_subtitle.domain.models import VideoAccessMode, VideoContainerType, VideoType
 from bili_subtitle.infrastructure.bilibili import BilibiliMetadataAdapter, create_http_client
 
 VIEW_API = "https://api.bilibili.com/x/web-interface/view"
@@ -24,6 +27,19 @@ def video_payload() -> dict[str, object]:
             "aid": 123,
             "bvid": "BV1xx411c7mD",
             "title": "测试投稿",
+            "is_story": False,
+            "is_season_display": False,
+            "is_chargeable_season": False,
+            "is_upower_exclusive": False,
+            "is_upower_play": False,
+            "premiere": None,
+            "rights": {
+                "is_stein_gate": 0,
+                "ugc_pay": 0,
+                "ugc_pay_preview": 0,
+                "arc_pay": 0,
+                "free_watch": 0,
+            },
             "pages": [
                 {"page": 1, "cid": 101, "part": "第一集"},
                 {"page": 2, "cid": 102, "part": "第二集"},
@@ -42,6 +58,93 @@ def test_fetch_video_by_bvid_and_parse_pages() -> None:
     assert route.called
     assert video.aid == 123
     assert [page.cid for page in video.pages] == [101, 102]
+    assert video.capabilities.video_type is VideoType.STANDARD_UGC
+    assert video.capabilities.container_type is VideoContainerType.STANDALONE
+    assert video.capabilities.access_mode is VideoAccessMode.PUBLIC
+
+
+@pytest.mark.parametrize(
+    ("changes", "video_type", "container_type", "access_mode", "premiere"),
+    [
+        (
+            {"rights": {"is_stein_gate": 1}},
+            VideoType.INTERACTIVE_UGC,
+            VideoContainerType.STANDALONE,
+            VideoAccessMode.PUBLIC,
+            False,
+        ),
+        (
+            {"is_story": True},
+            VideoType.STORY_UGC,
+            VideoContainerType.STANDALONE,
+            VideoAccessMode.PUBLIC,
+            False,
+        ),
+        (
+            {"is_season_display": True},
+            VideoType.STANDARD_UGC,
+            VideoContainerType.UGC_SEASON,
+            VideoAccessMode.PUBLIC,
+            False,
+        ),
+        (
+            {"is_upower_exclusive": True},
+            VideoType.STANDARD_UGC,
+            VideoContainerType.STANDALONE,
+            VideoAccessMode.ENTITLED,
+            False,
+        ),
+        (
+            {"rights": {"ugc_pay_preview": 1}},
+            VideoType.STANDARD_UGC,
+            VideoContainerType.STANDALONE,
+            VideoAccessMode.PREVIEW,
+            False,
+        ),
+        (
+            {"premiere": {"state": 1}},
+            VideoType.STANDARD_UGC,
+            VideoContainerType.STANDALONE,
+            VideoAccessMode.PUBLIC,
+            True,
+        ),
+    ],
+)
+@respx.mock
+def test_classifies_video_capabilities(
+    changes: dict[str, object],
+    video_type: VideoType,
+    container_type: VideoContainerType,
+    access_mode: VideoAccessMode,
+    premiere: bool,
+) -> None:
+    payload = video_payload()
+    data = cast(dict[str, object], payload["data"])
+    for key, value in changes.items():
+        if key == "rights":
+            rights = cast(dict[str, object], data["rights"])
+            assert isinstance(value, dict)
+            rights.update(cast(dict[str, object], value))
+        else:
+            data[key] = value
+    respx.get(VIEW_API).mock(return_value=httpx.Response(200, json=payload))
+    with httpx.Client() as client:
+        video = BilibiliMetadataAdapter(client).fetch_video(VideoReference(aid=123))
+    assert video.capabilities.video_type is video_type
+    assert video.capabilities.container_type is container_type
+    assert video.capabilities.access_mode is access_mode
+    assert video.capabilities.premiere is premiere
+
+
+@respx.mock
+def test_missing_classification_fields_fail_closed() -> None:
+    payload = video_payload()
+    data = cast(dict[str, object], payload["data"])
+    data.pop("rights")
+    respx.get(VIEW_API).mock(return_value=httpx.Response(200, json=payload))
+    with httpx.Client() as client:
+        video = BilibiliMetadataAdapter(client).fetch_video(VideoReference(aid=123))
+    assert video.capabilities.video_type is VideoType.UNKNOWN
 
 
 @respx.mock

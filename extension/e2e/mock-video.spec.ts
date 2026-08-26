@@ -31,16 +31,24 @@ test("evidence seek stays within two seconds", async ({ page }) => {
   expect(Math.abs(actual - 12_345)).toBeLessThanOrEqual(2_000);
 });
 
-test("a multi-BV video pod exposes one stable active BVID and collection index", async ({ page }) => {
-  await page.setContent(`<section class="video-pod__list">
-    <div class="video-pod__item" data-key="BV1xx411c7mD"><button class="simple-base-item">一</button></div>
-    <div class="video-pod__item" data-key="BV1yy411c7mD"><button class="simple-base-item active">二</button></div>
-    <div class="video-pod__item" data-key="BV1zz411c7mD"><button class="simple-base-item">三</button></div>
-  </section><ol><li></li><li class="bpx-state-multi-active-item"></li><li></li></ol>`);
+test("a collection item exposes its global position and inner P", async ({ page }) => {
+  await page.setContent(`<section class="video-pod">
+    <header class="video-pod__header"><span class="amt">（30/64）</span></header>
+    <div class="video-pod__item" data-key="BV1xx411c7mD"><button class="head">一</button></div>
+    <div class="video-pod__item" data-key="BV1yy411c7mD"><button class="head active">二</button>
+      <button class="page-item">P1</button><button class="page-item active">P2</button></div>
+    <div class="video-pod__item" data-key="BV1zz411c7mD"><button class="head">三</button></div>
+  </section><ol><li class="bpx-player-ctrl-eplist-multi-menu-item"></li>
+    <li class="bpx-player-ctrl-eplist-multi-menu-item bpx-state-multi-active-item"></li></ol>`);
   const identity = await page.evaluate(() => {
     const items = [...document.querySelectorAll<HTMLElement>(".video-pod__item")];
-    const index = items.findIndex((item) => item.querySelector(".simple-base-item.active"));
-    return { bvid: items[index]?.dataset.key, index: index + 1, total: items.length };
+    const selected = items.find((item) => item.querySelector(".head.active"));
+    const pages = [...(selected?.querySelectorAll(".page-item") ?? [])];
+    const pageIndex = pages.findIndex((item) => item.classList.contains("active"));
+    const amount = document.querySelector(".amt")?.textContent?.match(/(\d+)\/(\d+)/);
+    return { bvid: selected?.dataset.key, page: pageIndex + 1,
+      collectionIndex: Number(amount?.[1]), collectionTotal: Number(amount?.[2]) };
   });
-  expect(identity).toEqual({ bvid: "BV1yy411c7mD", index: 2, total: 3 });
+  expect(identity).toEqual({ bvid: "BV1yy411c7mD", page: 2,
+    collectionIndex: 30, collectionTotal: 64 });
 });

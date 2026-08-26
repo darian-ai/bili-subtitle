@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+from hashlib import md5
 from typing import cast
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -21,7 +23,80 @@ from bili_subtitle.domain.errors import (
 )
 from bili_subtitle.domain.models import SubtitleBody, SubtitleCue, SubtitleTrack, SubtitleTrackKind
 
-_PLAYER_API = "https://api.bilibili.com/x/player/v2"
+_NAV_API = "https://api.bilibili.com/x/web-interface/nav"
+_PLAYER_API = "https://api.bilibili.com/x/player/wbi/v2"
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+_WBI_KEY_TTL_SECONDS = 6 * 60 * 60
+_WBI_MIXIN_ORDER = (
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52,
+)
+_WBI_SIGNATURE_FAILURES = frozenset({-352, -403, -412})
 _TRUSTED_SUFFIXES = (".bilibili.com", ".bilivideo.com", ".hdslb.com")
 
 
@@ -32,8 +107,11 @@ class _DiscoveredTrack:
 
 
 class BilibiliSubtitleAdapter:
-    def __init__(self, client: httpx.Client) -> None:
+    def __init__(self, client: httpx.Client, *, clock: Callable[[], float] = time.time) -> None:
         self._client = client
+        self._clock = clock
+        self._wbi_key: str | None = None
+        self._wbi_key_loaded_at = 0.0
         self._pending: dict[tuple[str, int, SubtitleTrack], _DiscoveredTrack] = {}
 
     def discover(self, *, bvid: str, cid: int, aid: int | None = None) -> tuple[SubtitleTrack, ...]:
@@ -67,11 +145,24 @@ class BilibiliSubtitleAdapter:
     def _discover_private(
         self, *, bvid: str, cid: int, aid: int | None
     ) -> tuple[_DiscoveredTrack, ...]:
-        params: dict[str, str | int] = {"bvid": bvid, "cid": cid}
-        if aid is not None:
-            params["aid"] = aid
-        response = self._get(_PLAYER_API, params=params, no_cache=True)
-        payload = _response_payload(response)
+        unsigned: dict[str, str | int] = {"cid": cid}
+        unsigned["aid" if aid is not None else "bvid"] = aid if aid is not None else bvid
+        payload: Mapping[str, object] | None = None
+        for attempt in range(2):
+            params = self._signed_wbi_params(unsigned, refresh=attempt == 1)
+            response = self._get(
+                _PLAYER_API,
+                params=params,
+                no_cache=True,
+                request_headers={
+                    "Referer": f"https://www.bilibili.com/video/{bvid}",
+                    "User-Agent": _BROWSER_USER_AGENT,
+                },
+            )
+            payload = _response_payload(response)
+            if payload.get("code") not in _WBI_SIGNATURE_FAILURES or attempt == 1:
+                break
+        assert payload is not None
         code = payload.get("code")
         if code in {-101, -111}:
             raise AuthenticationRequired("需要登录后访问字幕。")
@@ -100,15 +191,72 @@ class BilibiliSubtitleAdapter:
             raise NoSubtitles("该分集没有可见字幕。")
         return tuple(_parse_track(item) for item in cast(list[object], raw_tracks))
 
+    def _signed_wbi_params(
+        self, params: Mapping[str, str | int], *, refresh: bool
+    ) -> dict[str, str | int]:
+        mixin_key = self._load_wbi_key(refresh=refresh)
+        signed: dict[str, str | int] = dict(params)
+        signed["wts"] = int(self._clock())
+        filtered = {
+            key: str(value).translate({ord(char): None for char in "!'()*"})
+            for key, value in signed.items()
+        }
+        query = urlencode(sorted(filtered.items()), quote_via=quote)
+        signed["w_rid"] = md5(f"{query}{mixin_key}".encode()).hexdigest()  # noqa: S324
+        return signed
+
+    def _load_wbi_key(self, *, refresh: bool) -> str:
+        now = self._clock()
+        if (
+            not refresh
+            and self._wbi_key is not None
+            and now - self._wbi_key_loaded_at < _WBI_KEY_TTL_SECONDS
+        ):
+            return self._wbi_key
+        response = self._get(
+            _NAV_API,
+            no_cache=refresh,
+            request_headers={
+                "Referer": "https://www.bilibili.com/",
+                "User-Agent": _BROWSER_USER_AGENT,
+            },
+        )
+        payload = _response_payload(response)
+        if payload.get("code") != 0:
+            raise SubtitlePlatformResponseError("平台拒绝了 WBI 签名密钥请求。")
+        data = payload.get("data")
+        typed_data: Mapping[str, object] = (
+            cast(Mapping[str, object], data) if isinstance(data, Mapping) else {}
+        )
+        wbi_img = typed_data.get("wbi_img")
+        if not isinstance(wbi_img, Mapping):
+            raise SubtitlePlatformResponseError("WBI 签名密钥响应结构异常。")
+        typed_wbi_img = cast(Mapping[str, object], wbi_img)
+        raw_key = "".join(
+            _url_filename(typed_wbi_img.get(field)) for field in ("img_url", "sub_url")
+        )
+        if len(raw_key) < 64:
+            raise SubtitlePlatformResponseError("WBI 签名密钥响应结构异常。")
+        try:
+            mixin_key = "".join(raw_key[index] for index in _WBI_MIXIN_ORDER)[:32]
+        except IndexError:
+            raise SubtitlePlatformResponseError("WBI 签名密钥响应结构异常。") from None
+        self._wbi_key = mixin_key
+        self._wbi_key_loaded_at = now
+        return mixin_key
+
     def _get(
         self,
         url: str,
         *,
         params: dict[str, str | int] | None = None,
         no_cache: bool = False,
+        request_headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
         try:
-            headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"} if no_cache else None
+            headers = dict(request_headers or {})
+            if no_cache:
+                headers.update({"Cache-Control": "no-cache", "Pragma": "no-cache"})
             response = self._client.get(url, params=params, headers=headers)
         except (httpx.TimeoutException, httpx.NetworkError):
             raise SubtitleNetworkError("字幕网络访问失败。") from None
@@ -121,6 +269,13 @@ class BilibiliSubtitleAdapter:
         if response.is_error:
             raise SubtitlePlatformResponseError("平台拒绝了字幕请求。")
         return response
+
+
+def _url_filename(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    filename = urlsplit(value).path.rsplit("/", 1)[-1]
+    return filename.split(".", 1)[0]
 
 
 def _response_payload(response: httpx.Response) -> Mapping[str, object]:

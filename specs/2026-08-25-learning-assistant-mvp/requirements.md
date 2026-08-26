@@ -7,7 +7,7 @@
 | Feature | Learning Assistant MVP |
 | 工作分支 | `feature/learning-assistant-mvp` |
 | 上游规格 | [`mission.md`](../mission.md)、[`tech-stack.md`](../tech-stack.md)、[`roadmap.md`](../roadmap.md) |
-| 状态 | 实施中；已确认 4/5 次独立学习记录，第 4 次被阻断且服务重启未测试 |
+| 状态 | 实施中；已确认 4/5 次独立学习记录，服务重启与跨页面复验仍被字幕错配和来源 transitioning 阻断 |
 | 日期 | 2026-08-25 |
 
 ## 目标与进入门禁
@@ -17,6 +17,14 @@
 五次记录不与阶段九验收混算，至少覆盖 Chrome/Edge、短/长视频、单/多 P、人工/AI 字幕和多轨道。只记录环境、耗时范围、操作结果和问题类别，不记录视频、账号或学习内容。
 
 ## 核心产品契约
+
+### 视频类型识别与支持门禁
+
+- Content script 只把标准桌面 `/video/BV...` 识别为候选页面；番剧/影视、课堂、直播、festival/活动页、播放列表、收藏夹、稍后再看、UP 空间和合集首页不得启用视频上下文。候选页面最终是否支持必须以后端规范元数据检查为准。
+- 后端把平台字段归一为 `video_type=standard_ugc|interactive_ugc|story_ugc|unknown`、`container_type=standalone|ugc_season`、`access_mode=public|entitled|preview`。缺少关键分类字段时使用 `unknown` 并失败关闭，不根据标题或 DOM 文案回退。
+- 只允许 `standard_ugc` 继续；互动、Story/特殊播放器返回 `unsupported_video_type`，首映中返回 `video_not_ready`，仅预览或平台拒绝访问返回 `video_access_denied`。以上失败必须发生在字幕轨道发现、正文下载和 Provider 请求之前。
+- `ugc_season` 只处理当前确认的 BV/P，并返回 `current_item_only` 限制；`entitled` 不因标记直接拒绝，在当前登录会话确有权限时返回条件支持和 `existing_entitlement_required`，不得购买、解锁或绕过权限。
+- “无字幕”不是不支持的视频类型。标准 UGC 在轨道集合为空时返回 `no_subtitles`，保留本地已有内容且不得调用 ASR、OCR 或 Provider。
 
 ### 已有内容自动恢复
 
@@ -36,14 +44,16 @@
 
 ### 多 P 来源强绑定与字幕时间轴
 
-- 普通同 BV 多 P 以 `video-pod` 激活项序号为 P，并与 URL 的显式 `p=N`、播放器选中序号交叉确认；站内 `video-pod` 多 BV 选集以激活项 `data-key` 的 BV 和播放器序号确认，集合序号只显示为“选集第 N 项”，不得冒充 P。当前仅支持操作当前选中视频，不包含合集批量导入或同步。
-- URL、选集 DOM 与播放器状态不一致的切换瞬间标记为 `transitioning/ambiguous`，禁止检查、加载字幕或生成；内容脚本按完整身份指纹通知，不得只依赖 `location.href` 变化。
-- 检查接口只发现规范 AID/BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库、成功检查 job ID 与选定轨道描述，后端校验检查 job 的知识库/BV/P/轨道后再次解析 BV/P→AID/CID。播放器字幕请求必须同时携带 AID/BVID/CID、禁用缓存并核对响应身份；客户端不得提交 AID、CID 或标题。
+- 普通同 BV 多 P 以 URL 的显式 `p=N` 与 `video-pod` 激活项序号一致为主证据；站内 `video-pod` 多 BV 选集以 URL BV/P 与激活项 `data-key`/页码一致为主证据，集合序号只显示为“选集第 N 项”，不得冒充 P。播放器菜单和 CID 存在时用于发现冲突，缺失时不得阻塞已经一致的 URL 与 pod；单 P 合集的播放器菜单序号按合集位置解释，多 P 合集的菜单序号才按当前 BV 内部 P 解释。当前仅支持操作当前选中视频，不包含合集批量导入或同步。
+- metadata 按 `og:video`、canonical、`og:url` 的顺序选择首个有效身份；次要标签因 SPA 残留而不一致时不得覆盖主身份。pod 正在加载、无激活项或现有主证据明确冲突时标记 `transitioning/ambiguous`，禁止检查、加载字幕或生成；内容脚本按完整身份指纹通知，不得只依赖 `location.href` 变化。
+- 检查接口只发现规范 AID/BV/P、CID、分集标题和轨道；客户端准备字幕时只提交知识库、成功检查 job ID 与选定轨道。后端校验检查 job 的知识库/BV/P/轨道后再次解析 BV/P→AID/CID。播放器字幕轨道必须通过 `/x/player/wbi/v2` 获取，使用当前登录会话的 WBI key 签名、禁用缓存并核对 AID/BVID/CID；签名失败只允许刷新 key 后重试一次。客户端不得提交 AID、CID 或标题。
+- prepare 阶段只能接受 inspect 返回的精确字幕轨道 ID；轨道 ID 消失或变化时稳定返回 `subtitle_track_unavailable` 并要求重新检查。语言、显示名和人工/AI 类型仅用于展示，不得作为替代轨道的接受条件。
 - 单轨检查后自动准备字幕；多轨必须由用户明确选择并点击“加载字幕”。指南只接受已保存的 Transcript `revision_id` 与预期 BV/P，来源不匹配稳定失败且不得调用 Provider。
 - workspace 同时返回该 BV/P 最近保存的 Transcript revision，并明确区分空、仅 Transcript 和已有指南；仅 Transcript 不得被误报为“已有学习内容”或阻止首次生成。已有指南保持绑定 revision，新明确加载的 revision 成为字幕页默认版本，并可切回指南绑定字幕，旧指南不被覆盖。
 - 独立字幕页完整显示时间戳和 cue 文本；间隙无高亮，重叠时使用最后开始的 cue。默认跟随播放位置，手动滚动暂停，明确恢复后继续；点击 cue 只跳转起点，不暂停视频。
 - 长字幕使用浏览器原生延迟渲染优化，但保留完整列表语义、键盘操作和可访问名称。旧 revision 缺少来源证明时标记 `legacy_unverified` 并显示警告；只有 BV/P/CID/内容哈希完全一致时才能原位升级验证来源，不删除、不重绑或改写历史内容。
-- 检查、字幕准备、workspace 与生成结果均绑定启动时的 `tabId + library + BV/P` owner；所有任务结果携带 BV/P/revision，应用前再次核对，迟到结果只能写回原作用域。
+- 检查、字幕准备、workspace 与生成结果均绑定启动时的 `tabId + library + BV/P` owner；所有任务结果携带 BV/P/revision，应用前再次核对，迟到结果只能写回原作用域。视频上下文轮询使用单调递增请求序号，旧请求不得覆盖更新页面；检查和字幕准备使用同步 in-flight 门禁，React 状态更新前也不能重复创建任务。
+- guide workspace 返回后必须读取其绑定 Transcript，并与请求 BV/P 完全一致后才能应用；渲染层再次拒绝任何不属于当前 BV/P 的 Transcript 或 Guide。
 - 创建或重新生成前必须显示 P、分集标题、轨道、revision 和 Provider 的确认面板；确认前不得调用模型。取消、失败和重新生成期间继续显示旧指南，只有来源匹配的新指南成功后才切换。
 
 ### 任务取消、恢复与重试
@@ -111,6 +121,7 @@ POST /api/v1/cache/clear
 - SQLite schema 升级到 v4，规范化保存 BV/P 来源键、指南生成元数据、测验尝试、总结、导图、usage、重试关系和取消状态；旧 v3 数据前向迁移并保留备份。
 - `bili-study config provider set` 新增可选 `--input-price-per-million`、`--output-price-per-million` 和 `--currency`；旧配置继续可读。
 - `VideoContext` 携带 `identity_state`、`identity_evidence` 及可选集合序号；Transcript 携带 `source_verification`、`page_identity_source` 与 `inspection_job_id`，字幕页展示 BV/P/CID/inspect 来源链。来源冲突稳定返回 `video_identity_ambiguous`、`page_identity_unresolved` 或 `inspection_source_mismatch`。
+- video inspect job 结果 schema v2 携带 `video_type`、`container_type`、`access_mode`、`support_status=supported|conditional` 与 `limitations`；新增稳定错误 `unsupported_video_type`、`video_not_ready` 和 `video_access_denied`。该结果属于任务记录，不改变 Transcript/Guide 身份或 SQLite schema。
 
 ## 明确不在范围内
 

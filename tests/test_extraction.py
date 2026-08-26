@@ -65,7 +65,20 @@ def test_ai_track_full_http_to_files_integration(tmp_path: Path) -> None:
     raw = b'{ "extra": true, "body": [{"from":0.0005,"to":1,"content":" AI\\ntext "}] }'
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/x/player/v2":
+        if request.url.path == "/x/web-interface/nav":
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                        }
+                    },
+                },
+            )
+        if request.url.path == "/x/player/wbi/v2":
             return httpx.Response(
                 200,
                 json={
