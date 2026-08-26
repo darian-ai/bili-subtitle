@@ -35,8 +35,9 @@ function context() {
 
 export default defineContentScript({
   matches: ["https://www.bilibili.com/video/*"],
-  main() {
-    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  main(contentContext) {
+    const onMessage = (message: any, _sender: chrome.runtime.MessageSender,
+      sendResponse: (response?: any) => void) => {
       if (message?.type === "video-context") {
         sendResponse(context());
       }
@@ -50,14 +51,16 @@ export default defineContentScript({
         }
       }
       return true;
-    });
+    };
+    chrome.runtime.onMessage.addListener(onMessage);
 
     let previous = "";
     let scheduled: number | undefined;
     const notifyNavigation = () => {
-      if (scheduled !== undefined) return;
-      scheduled = window.setTimeout(() => {
+      if (!contentContext.isValid || scheduled !== undefined) return;
+      scheduled = contentContext.setTimeout(() => {
         scheduled = undefined;
+        if (!contentContext.isValid) return;
         const next = context();
         const fingerprint = JSON.stringify({
           supported: next.supported, bvid: next.bvid, page: next.page,
@@ -66,13 +69,22 @@ export default defineContentScript({
         });
         if (previous === fingerprint) return;
         previous = fingerprint;
-        chrome.runtime.sendMessage({ type: "content-video-navigation", context: next }).catch(() => undefined);
+        try {
+          chrome.runtime.sendMessage({ type: "content-video-navigation", context: next })
+            .catch(() => undefined);
+        } catch {
+          // Extension reload invalidates the old isolated world synchronously.
+        }
       }, 100);
     };
-    window.addEventListener("popstate", notifyNavigation);
+    contentContext.addEventListener(window, "popstate", notifyNavigation);
     const observer = new MutationObserver(notifyNavigation);
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true,
       attributeFilter: ["class", "data-key"] });
+    contentContext.onInvalidated(() => {
+      observer.disconnect();
+      try { chrome.runtime.onMessage.removeListener(onMessage); } catch { /* already invalid */ }
+    });
     notifyNavigation();
   }
 });

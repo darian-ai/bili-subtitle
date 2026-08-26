@@ -32,6 +32,7 @@
 - manifest 的默认 side panel 不得形成跨标签页的全局实例。每个普通 Bilibili 视频标签页只有在用户点击扩展后才打开绑定其 `tabId` 的独立侧栏。
 - 切到未打开侧栏的标签页或非普通视频页面时隐藏侧栏；返回已打开的视频标签页时恢复该标签页原实例。同标签页 Bilibili SPA 切换 BV/P 时保持侧栏打开并切换独立 workspace。
 - 同一标签页导航到不支持页面时关闭并禁用侧栏；返回视频页后需要重新点击一次。侧栏没有合法 `tabId` 时不得回退查询当前活动标签页。
+- 扩展重载或更新使旧 content script context 失效时，必须停止其定时器、页面监听和 MutationObserver；旧实例不得继续访问 `chrome.runtime` 或产生 `Extension context invalidated` 未捕获异常。
 
 ### 多 P 来源强绑定与字幕时间轴
 
@@ -135,3 +136,4 @@ POST /api/v1/cache/clear
 | P10-004 | 阻断 | 默认全局 side panel 导致未点击标签页和非 Bilibili 页面仍显示侧栏 | 已改为仅受支持视频标签页启用的 tab-specific panel；自动化通过，Chrome/Edge 真实复验待执行 |
 | P10-005 | 阻断 | 长任务缺少停止与显式重试，服务重启可能重复发送计费请求 | 已实现取消状态机、重启中断与 `retry_of`；自动化已覆盖核心状态，真实在途 Provider/重启复验待执行 |
 | P10-006 | 阻断 | 只有 Transcript、从未生成指南的 workspace 被误判为已有学习内容，首次创建被短路 | 已区分 Transcript-only 与 guide-ready；创建仅在确有 guide 时复用，自动化通过，待真实复验 |
+| P10-007 | 重要 | 重载扩展后旧 content script 的 MutationObserver 继续发送导航消息，抛出 `Extension context invalidated` | 已将监听器、定时器和 observer 绑定 WXT context 生命周期，并为同步失效竞态增加保护；待真实重载复验 |
