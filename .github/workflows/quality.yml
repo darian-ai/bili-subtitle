@@ -37,7 +37,7 @@ jobs:
         run: uv run python scripts/verify_release.py dist --rebuild-sdist
       - name: Verify isolated uv tool install
         shell: pwsh
-        run: ./scripts/verify_isolated_install.ps1 -Wheel ./dist/bili_study-0.2.0a1-py3-none-any.whl
+        run: ./scripts/verify_isolated_install.ps1 -Wheel ./dist/bili_study-0.2.0-py3-none-any.whl
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -66,11 +66,11 @@ jobs:
         working-directory: extension
         run: npm run build
       - name: Package deterministic extension archives
-        run: uv run python scripts/package_extensions.py --version 0.2.0a1
+        run: uv run python scripts/package_extensions.py --version 0.2.0
       - name: Upload extension release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: bili-study-extension-0.2.0a1
+          name: bili-study-extension-0.2.0
           path: |
             dist/extensions/*.zip
             dist/extensions/SHA256SUMS

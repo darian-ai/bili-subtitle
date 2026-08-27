@@ -1,12 +1,12 @@
 # CHANGELOG
 
-## 0.2.0 - 未发布
+## 0.2.0 - 2026-08-27
 
 - 新增 v3→v4 安全迁移、BV/P 来源索引、完整 workspace 自动恢复和历史指南版本选择。
 - 新增任务取消/显式重试、usage 与 Decimal 成本估算、缓存 inventory/prune 和带预览确认的生成物清理。
 - 新增持久主动小测、证据化总结、受限 MindMapTree 与本地确定性 Mermaid；个人笔记和作答不进入总结输入。
 - 加固多 P/WBI 精确轨道、标签页归属、扩展重载生命周期、完整字幕时间轴、无障碍与长视频恢复。
-- 新增 Chrome/Edge 确定性归档与 SHA-256 清单脚本；最终版本仍以真实双浏览器、Provider 和待合并 CI 验收为发布门禁。
+- 新增 Chrome/Edge 确定性归档与 SHA-256 清单脚本；真实双浏览器、Provider 和 Windows CI 验收均已通过。
 
 ## 0.2.0-alpha - 2026-08-25
 

@@ -90,6 +90,6 @@
 ## 10. 验证、真实使用与阶段关闭
 
 - [x] 执行 [`validation.md`](./validation.md) 的全量 Python、Extension、E2E、迁移、安全和 V1 回归。
-- [ ] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部人工验收已通过，待提交后 CI。CI 通过后更新 Constitution 并发布 `0.2.0`。
+- [x] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部人工验收与 Quality run 33060881906 已通过，Constitution 已更新并发布 `0.2.0`。
 
 本轮自动化结果：Python 315 项通过、覆盖率 90.08%，Ruff format/lint、strict Pyright、许可证/秘密扫描、wheel/sdist、sdist 重建、隔离双命令安装与 `git diff --check` 通过；Extension OpenAPI 重新生成、TypeScript、ESLint、32 项 Vitest、3 项 Playwright、Chrome/Edge 生产构建、确定性归档及 SHA-256 清单通过。三个已知 BV/P 的连续真实 WBI 请求均命中预期轨道与正文；本地服务此前已在空测试库上重启并通过健康检查。渐进增强来源判定、真实 Provider 重启/取消和全部 Chrome/Edge 人工验收均已通过；仅待提交后 CI，不以本地自动化替代。

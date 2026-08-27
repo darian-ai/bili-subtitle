@@ -1,6 +1,6 @@
 # bili-study
 
-当前源码是已通过阶段九验收的 `0.2.0-alpha` 浏览器学习原型：除字幕提取与阶段八学习后端外，已经提供只监听 loopback 的 Local API，以及由 WXT、TypeScript、React 构建的 Chrome/Edge Manifest V3 侧栏。当前只提供本地安装和加载已解压扩展，不进入扩展商店。
+当前源码是已通过阶段十验收的 `0.2.0` 本地安装视频学习助手 MVP：除字幕提取与学习后端外，提供只监听 loopback 的 Local API，以及由 WXT、TypeScript、React 构建的 Chrome/Edge Manifest V3 侧栏。当前只提供本地安装和加载已解压扩展，不进入扩展商店。
 
 新安装使用 `uv tool install bili-study`，提供 `bili-study extract <视频标识或URL>` 与 `bili-study auth login|status|clear`。原有 `bili-subtitle` 命令继续兼容并复用原 Credential Manager 登录状态。
 
@@ -56,7 +56,7 @@ uv python install 3.12
 
 ```powershell
 uv build
-uv tool install .\dist\bili_study-0.2.0a1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0-py3-none-any.whl
 ```
 
 安装完成后验证命令：
@@ -78,7 +78,7 @@ uv tool update-shell
 ```powershell
 git pull
 uv build
-uv tool install .\dist\bili_study-0.2.0a1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0-py3-none-any.whl
 ```
 
 卸载：
@@ -475,7 +475,7 @@ uv run ruff format --check .
 uv run pyright
 uv build
 uv run python scripts/verify_release.py dist --rebuild-sdist
-.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0a1-py3-none-any.whl
+.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0-py3-none-any.whl
 ```
 
 扩展门禁在 `extension` 目录运行：
