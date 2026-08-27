@@ -35,7 +35,7 @@ function readMetadata(document: Document): Pick<VideoDomSnapshot, "metadata" | "
   return identity === undefined ? {} : { metadata: identity };
 }
 
-function playerPage(document: Document): { page?: number; cid?: string } {
+function playerPage(document: Document): { page?: number; cid?: string; total?: number } {
   const active = document.querySelector<HTMLElement>(
     ".bpx-player-ctrl-eplist-multi-menu-item.bpx-state-multi-active-item",
   );
@@ -47,6 +47,7 @@ function playerPage(document: Document): { page?: number; cid?: string } {
   return {
     ...(index < 0 ? {} : { page: index + 1 }),
     ...(cid && CID.test(cid) ? { cid } : {}),
+    total: siblings.length,
   };
 }
 
@@ -67,9 +68,9 @@ function readPod(document: Document): VideoPodSnapshot | undefined {
   const collection = items.some((item) => BVID.test(item.dataset.key ?? ""));
 
   if (collection) {
-    const selected = items.find((item) =>
-      item.matches(".active")
-      || item.querySelector(".head.active, .simple-base-item.active") !== null);
+    const activeItems = items.filter((item) =>
+      item.matches(".active") || item.querySelector(".active") !== null);
+    const selected = activeItems.length === 1 ? activeItems[0] : undefined;
     if (!selected) return { kind: "collection" };
     const pages = [...selected.querySelectorAll<HTMLElement>(".page-item")];
     const selectedPageIndex = pages.findIndex((item) => item.classList.contains("active"));
@@ -83,6 +84,7 @@ function readPod(document: Document): VideoPodSnapshot | undefined {
       ...(selectedPage === undefined ? {} : { selectedPage }),
       multiplePages: pages.length > 1,
       ...(player.page === undefined ? {} : { playerPage: player.page }),
+      ...(player.total === undefined ? {} : { playerTotal: player.total }),
       ...(amount.index === undefined ? {} : { collectionIndex: amount.index }),
       ...(amount.total === undefined ? {} : { collectionTotal: amount.total }),
     };

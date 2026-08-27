@@ -75,12 +75,13 @@ describe("video context", () => {
     });
   });
 
-  it("compares a single-page collection player index with the collection position", () => {
+  it("treats a player menu as optional corroboration for a collection", () => {
     const url = "https://www.bilibili.com/video/BV1hduL6pEcu/";
     expect(resolveVideoContext(url, 1, {
       metadata: { bvid: "BV1hduL6pEcu", page: 1 },
       pod: { kind: "collection", selectedBvid: "BV1hduL6pEcu", selectedPage: 1,
-        multiplePages: false, playerPage: 248, collectionIndex: 248, collectionTotal: 277 },
+        multiplePages: false, playerPage: 248, playerTotal: 277,
+        collectionIndex: 248, collectionTotal: 277 },
     })).toMatchObject({
       bvid: "BV1hduL6pEcu", page: 1, identity_state: "resolved",
       identity_evidence: "video_pod_item", collection_index: 248, collection_total: 277,
@@ -88,11 +89,17 @@ describe("video context", () => {
     expect(resolveVideoContext(url, 1, {
       metadata: { bvid: "BV1hduL6pEcu", page: 1 },
       pod: { kind: "collection", selectedBvid: "BV1hduL6pEcu", selectedPage: 1,
-        multiplePages: false, playerPage: 247, collectionIndex: 248 },
-    }).identity_state).toBe("transitioning");
+        multiplePages: false, playerPage: 247, playerTotal: 277,
+        collectionIndex: 248, collectionTotal: 277 },
+    }).identity_state).toBe("resolved");
+    expect(resolveVideoContext(url, 1, {
+      pod: { kind: "collection", selectedBvid: "BV1hduL6pEcu", selectedPage: 1,
+        multiplePages: false, playerPage: 2, playerTotal: 6,
+        collectionIndex: 248, collectionTotal: 277 },
+    }).identity_state).toBe("resolved");
   });
 
-  it("blocks metadata, player page and CID conflicts", () => {
+  it("blocks explicit URL/DOM conflicts but tolerates stale player details", () => {
     const url = "https://www.bilibili.com/video/BV1xx411c7mD?p=2";
     expect(resolveVideoContext(url, 0, {
       metadata: { bvid: "BV1xx411c7mD", page: 1 },
@@ -101,12 +108,27 @@ describe("video context", () => {
       metadata: { bvid: "BV1xx411c7mD", page: 2 },
       pod: { kind: "pages", selectedPage: 2, playerPage: 1,
         selectedCid: "22", playerCid: "22" },
-    }).identity_state).toBe("transitioning");
+    }).identity_state).toBe("resolved");
     expect(resolveVideoContext(url, 0, {
       metadata: { bvid: "BV1xx411c7mD", page: 2 },
       pod: { kind: "pages", selectedPage: 2, playerPage: 2,
         selectedCid: "22", playerCid: "11" },
-    }).identity_state).toBe("transitioning");
+    }).identity_state).toBe("resolved");
+  });
+
+  it("falls back to matching URL metadata when an unfamiliar pod has no selection", () => {
+    const url = "https://www.bilibili.com/video/BV1xx411c7mD";
+    expect(resolveVideoContext(url, 0, {
+      metadata: { bvid: "BV1xx411c7mD", page: 1 },
+      pod: { kind: "collection", collectionIndex: 2, collectionTotal: 10 },
+    })).toMatchObject({
+      bvid: "BV1xx411c7mD", page: 1, identity_state: "resolved",
+      identity_evidence: "single_video",
+    });
+    expect(resolveVideoContext(url, 0, {
+      metadata: { bvid: "BV1stale11c7mD", page: 1 },
+      pod: { kind: "collection", selectedBvid: "BV1xx411c7mD", selectedPage: 1 },
+    }).identity_state).toBe("resolved");
   });
 
   it("follows a chapter without pausing or generating", () => {

@@ -9,13 +9,13 @@
 
 ### 本轮阻断修复
 
-- [ ] P10-001：播放器字幕轨道发现改用 `/x/player/wbi/v2` 和当前登录会话的 WBI key；严格核对 AID/BVID/CID。下载阶段只接受 inspect 选中的精确轨道 ID，ID 消失或变化时返回 `subtitle_track_unavailable` 并要求重新检查，禁止按语言、显示名或人工/AI 类型回退。代码、自动化及三个 BV/P 连续真实 WBI 冒烟已通过，待真实侧边栏复验后关闭。旧 `/x/player/v2` 实测会为同一来源返回轮换且属于其他视频的字幕，原“稳定描述唯一回退”结论撤销。
-- [ ] P10-002：以 `tabId + library + BV/P` 隔离结果；同 BV 多 P 以 URL 与 pod 激活序号为主证据，pod 多 BV 使用激活 `data-key` 与页码确认。播放器菜单/CID 只在存在时做冲突检查，缺失不得永久阻塞；metadata 使用明确优先级，次要标签残留不得制造永久冲突。轮询响应、workspace 和生成结果应用前再次核对 owner 与 BV/P，迟到结果只回原作用域。补充兼容 Bilibili 简单合集项将 `.active` 放在 `.simple-base-item` 内层的 DOM 变体；同时区分播放器菜单序号语义：单 P 合集与合集位置比较，多 P 合集才与内部 P 比较。两种变体分别在 `BV1Y9u76aEdy`、`BV1hduL6pEcu` 单标签页复现，证明与多标签页无关。代码与自动化通过后仍待 Chrome/Edge 真实侧边栏复验关闭。
+- [x] P10-001：播放器字幕轨道发现改用 `/x/player/wbi/v2` 和当前登录会话的 WBI key；严格核对 AID/BVID/CID。下载阶段只接受 inspect 选中的精确轨道 ID，ID 消失或变化时返回 `subtitle_track_unavailable` 并要求重新检查，禁止按语言、显示名或人工/AI 类型回退。代码、自动化、三个 BV/P 连续真实 WBI 冒烟及 Chrome/Edge 脱敏侧边栏复验均已通过。旧 `/x/player/v2` 实测会为同一来源返回轮换且属于其他视频的字幕，原“稳定描述唯一回退”结论撤销。
+- [x] P10-002：以 `tabId + library + BV/P` 隔离结果；同 BV 多 P 以 URL 与 pod 激活序号为主证据，pod 多 BV 使用激活 `data-key` 与页码确认。来源判定改为渐进增强：URL 是主身份，未知 DOM、虚拟列表、缺少或陈旧播放器菜单只减少旁证，不再永久阻塞；只有已明确激活的 BV/P 与 URL 冲突才进入 transitioning，最终仍由服务端 WBI 的 BVID/CID/轨道 ID 强校验防止错配。轮询响应、workspace 和生成结果应用前再次核对 owner 与 BV/P，迟到结果只回原作用域。真实复验新增 `.normal-base-item.active` 与虚拟化播放器菜单变体，修复后的 Chrome/Edge 重载验收、32 项 Vitest、3 项 Playwright 及双浏览器生产构建均已通过。
 - [x] P10-003：证据反馈 Prompt 增加明确 `output_schema`，限制反馈证据不得超出问题范围；在模型调用前持久保存原始回答，失败时保留 `feedback_failed` 状态。
-- [ ] P10-004：禁用全局侧栏回退，只为普通 Bilibili 视频标签页启用独立 panel；未点击或不支持页面隐藏，返回已打开标签页自动恢复。代码与自动化已完成，待真实复验。
-- [ ] P10-005：实现排队/在途取消、迟到结果丢弃、重启中断、显式 retry 与 `retry_of`；核心状态机自动化完成，待真实 Provider 和服务重启复验。
-- [ ] P10-006：workspace 区分 empty/transcript-only/guide-ready；只有 `existing.guide` 才短路首次生成，Transcript-only 显示准确提示并进入确认面板。代码与自动化已完成，待真实复验。
-- [ ] P10-007：使用 WXT content context 管理 popstate、定时器和 MutationObserver；失效时断开 observer、移除 runtime listener，并吞掉仅发生于同步失效窗口的 runtime 异常。代码、类型检查和双浏览器构建通过，待真实扩展重载复验。
+- [x] P10-004：禁用全局侧栏回退，只为普通 Bilibili 视频标签页启用独立 panel；未点击或不支持页面隐藏，返回已打开标签页自动恢复。代码、自动化与 Chrome/Edge 脱敏复验均已完成。
+- [x] P10-005：实现排队/在途取消、迟到结果丢弃、重启中断、显式 retry 与 `retry_of`；核心状态机自动化、真实 Provider 和服务重启复验均已通过。
+- [x] P10-006：workspace 区分 empty/transcript-only/guide-ready；只有 `existing.guide` 才短路首次生成，Transcript-only 显示准确提示并进入确认面板。代码、自动化与 Chrome/Edge 脱敏复验均已完成。
+- [x] P10-007：使用 WXT content context 管理 popstate、定时器和 MutationObserver；失效时断开 observer、移除 runtime listener，并吞掉仅发生于同步失效窗口的 runtime 异常。代码、类型检查、双浏览器构建与 Chrome/Edge 真实扩展重载复验均已通过。
 
 ### 本轮 Transcript 与多 P 增量
 
@@ -40,7 +40,7 @@
 - [x] 冻结普通 UGC、同 BV 多 P、UGC 合集当前项和已有权限受限 UGC 的覆盖边界；明确无字幕是能力不可用而非视频类型不支持。
 - [x] 从平台元数据归一视频、容器和访问类型；互动、Story、未知特殊模型、首映中和仅预览内容在字幕访问前失败关闭。
 - [x] inspect job result 升级到 schema v2，返回类型、条件支持和限制字段；扩展增加稳定错误文案与非视频路由测试。
-- [ ] 使用真实普通多 P、UGC 合集当前项、已有权限内容及至少一个明确拒绝类型完成 Chrome/Edge 脱敏复验。
+- [x] 使用真实普通多 P、UGC 合集当前项、已有权限内容及至少一个明确拒绝类型完成 Chrome/Edge 脱敏复验，包括渐进增强来源判定修复。
 
 ## 2. 建立 v4 持久化与已有内容查询
 
@@ -52,7 +52,7 @@
 
 - [x] 打开 BV/P 后直接加载最新本地版本，不检查字幕、不要求 Provider、不调用模型，并提供历史版本选择。
 - [x] 显示保存时的 revision/轨道/Provider 信息；字幕更新后旧内容只保持原证据语义。
-- [ ] 当前 BV/P 存在指南时读取完整本地 workspace；普通大纲、详情、练习和相同回答反馈均零模型复用，标签页切换及同标签页 A→B→A 不覆盖内容。自动化已完成，待真实复验。
+- [x] 当前 BV/P 存在指南时读取完整本地 workspace；普通大纲、详情、练习和相同回答反馈均零模型复用，标签页切换及同标签页 A→B→A 不覆盖内容。自动化与 Chrome/Edge 脱敏复验均已完成。
 
 ## 4. 加固持久任务生命周期
 
@@ -80,7 +80,7 @@
 - [x] 重构侧栏状态加载与任务反馈；已提供取消、重试、字幕页、返回当前章节、重连和历史版本入口。
 - [x] 完成键盘、焦点、语义、ARIA、对比度、减少动画和响应宽度门禁。
 - [x] 增加字幕轨道 ID 轮换恢复、歧义错误提示、标签页定向消息和后台任务按 scope 保存进度。
-- [ ] 完成 tab-specific panel 的 Chrome/Edge 真实复验：每个视频标签页点击一次、非视频页不显示、返回原标签页恢复原实例。
+- [x] 完成 tab-specific panel 的 Chrome/Edge 真实复验：每个视频标签页点击一次、非视频页不显示、返回原标签页恢复原实例。
 
 ## 9. 完成交付文档和 0.2.0 归档
 
@@ -90,6 +90,6 @@
 ## 10. 验证、真实使用与阶段关闭
 
 - [x] 执行 [`validation.md`](./validation.md) 的全量 Python、Extension、E2E、迁移、安全和 V1 回归。
-- [ ] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部通过后更新 Constitution 并发布 `0.2.0`。
+- [ ] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部人工验收已通过，待提交后 CI。CI 通过后更新 Constitution 并发布 `0.2.0`。
 
-本轮自动化结果：Python 315 项通过、覆盖率 90.08%，Ruff format/lint、strict Pyright、许可证/秘密扫描、wheel/sdist、sdist 重建、隔离双命令安装与 `git diff --check` 通过；Extension OpenAPI 重新生成、TypeScript、ESLint、30 项 Vitest、3 项 Playwright、Chrome/Edge 生产构建、确定性归档及 SHA-256 清单通过。三个已知 BV/P 的连续真实 WBI 请求均命中预期轨道与正文；本地服务此前已在空测试库上重启并通过健康检查。真实侧边栏跨页面、真实 Provider 重启/取消和待合并 CI 仍须真实复验，不以自动化替代。
+本轮自动化结果：Python 315 项通过、覆盖率 90.08%，Ruff format/lint、strict Pyright、许可证/秘密扫描、wheel/sdist、sdist 重建、隔离双命令安装与 `git diff --check` 通过；Extension OpenAPI 重新生成、TypeScript、ESLint、32 项 Vitest、3 项 Playwright、Chrome/Edge 生产构建、确定性归档及 SHA-256 清单通过。三个已知 BV/P 的连续真实 WBI 请求均命中预期轨道与正文；本地服务此前已在空测试库上重启并通过健康检查。渐进增强来源判定、真实 Provider 重启/取消和全部 Chrome/Edge 人工验收均已通过；仅待提交后 CI，不以本地自动化替代。

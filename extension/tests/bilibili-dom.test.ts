@@ -49,7 +49,8 @@ describe("Bilibili DOM snapshot", () => {
     expect(readVideoDomSnapshot(document)).toEqual({
       metadata: { bvid: "BV1yANy6mEWe", page: 6 },
       pod: { kind: "collection", selectedBvid: "BV1yANy6mEWe", selectedPage: 6,
-        multiplePages: true, playerPage: 6, collectionIndex: 30, collectionTotal: 64 },
+        multiplePages: true, playerPage: 6, playerTotal: 7,
+        collectionIndex: 30, collectionTotal: 64 },
     });
   });
 
@@ -69,6 +70,29 @@ describe("Bilibili DOM snapshot", () => {
       pod: {
         kind: "collection", selectedBvid: "BV1Y9u76aEdy", selectedPage: 1,
         multiplePages: false,
+      },
+    });
+  });
+
+  it("reads a virtualized collection whose normal base item is active", () => {
+    metadata("BV1ZsVp6hERB", 1);
+    document.body.innerHTML = `<section class="video-pod">
+      <header class="video-pod__header"><span class="amt">（34/44）</span></header>
+      <div class="video-pod__item normal" data-key="BV1other0000">
+        <div class="normal-base-item normal"></div></div>
+      <div class="video-pod__item normal" data-key="BV1ZsVp6hERB">
+        <div class="normal-base-item active normal"></div></div>
+    </section><ul>
+      <li class="bpx-player-ctrl-eplist-multi-menu-item"></li>
+      <li class="bpx-player-ctrl-eplist-multi-menu-item bpx-state-multi-active-item"></li>
+    </ul>`;
+
+    expect(readVideoDomSnapshot(document)).toEqual({
+      metadata: { bvid: "BV1ZsVp6hERB", page: 1 },
+      pod: {
+        kind: "collection", selectedBvid: "BV1ZsVp6hERB", selectedPage: 1,
+        multiplePages: false, playerPage: 2, playerTotal: 2,
+        collectionIndex: 34, collectionTotal: 44,
       },
     });
   });
