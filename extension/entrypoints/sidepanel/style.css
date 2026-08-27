@@ -2,7 +2,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 0; }
 main { width: 100%; min-width: 0; padding: 16px 16px 88px; margin: 0; }
-header, .row, .chapter-heading, .progress > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+header, .row, .chapter-heading, .progress > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { margin: 0; font-size: 1.35rem; }
 h2 { margin: 0 0 12px; font-size: 1.15rem; }
 h3 { margin: 18px 0 6px; font-size: 1rem; }
@@ -13,6 +13,7 @@ input, select, textarea { width: 100%; min-width: 0; padding: 10px; color: inher
 textarea { min-height: 110px; resize: vertical; }
 button { min-height: 44px; padding: 9px 13px; color: white; font: inherit; background: #1769aa; border: 0; border-radius: 7px; cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid #f5a623; outline-offset: 2px; }
 button.quiet, button.back { padding-inline: 4px; color: #1769aa; background: transparent; }
 button.compact { min-height: 36px; font-size: .88rem; }
 .online, .offline { padding: 4px 9px; font-size: .78rem; border-radius: 999px; }
@@ -35,7 +36,10 @@ dl div { margin-bottom: 10px; }
 dt { font-weight: 700; }
 dd { margin-left: 0; color: #4d5156; }
 code { overflow-wrap: anywhere; }
-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 10; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 8px 12px 10px; background: rgba(248, 247, 243, .96); border-top: 1px solid #dedbd2; backdrop-filter: blur(8px); }
+pre { max-width: 100%; padding: 10px; overflow: auto; white-space: pre-wrap; background: #f5f7fa; }
+.mermaid-output { max-width: 100%; overflow: auto; }
+.mermaid-output svg { display: block; min-width: 520px; height: auto; }
+nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 10; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 8px 8px 10px; background: rgba(248, 247, 243, .96); border-top: 1px solid #dedbd2; backdrop-filter: blur(8px); }
 nav button { color: #5f6368; background: transparent; }
 nav button.selected { color: white; background: #1769aa; }
 .confirmation { border-color: #1769aa; }
@@ -44,6 +48,10 @@ nav button.selected { color: white; background: #1769aa; }
 .transcript-list li.current { background: #fff4d6; border-left-color: #f5a623; }
 button.cue { display: grid; grid-template-columns: 4.5em 1fr; width: 100%; min-height: 52px; gap: 10px; color: #202124; text-align: left; background: transparent; border-radius: 0; }
 button.cue time { color: #1769aa; font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
 
 @media (min-width: 640px) {
   main { padding-inline: 24px; }

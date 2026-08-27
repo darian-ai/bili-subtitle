@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiError, DefaultService, OpenAPI, type TranscriptPrepareRequest } from "../../src/api";
 import { VideoInspectRequest } from "../../src/api/models/VideoInspectRequest";
 import { localApi } from "../../src/local-api";
@@ -42,13 +42,22 @@ interface Transcript {
   cues: TranscriptCue[];
 }
 interface ReflectionAttempt {
-  reflection_id: string; guide_id: string; question_id: string; response: string;
+  reflection_id?: string; attempt_id?: string; guide_id: string; question_id: string; response: string;
   status: "pending" | "succeeded" | "feedback_failed"; feedback?: Feedback | null;
 }
+interface StudySummary {
+  summary_id: string; revision_id: string; created_at: string;
+  learning_goals: { text: string; evidence: Evidence }[];
+  chapter_conclusions: { text: string; evidence: Evidence }[];
+  key_connections: { text: string; evidence: Evidence }[]; unknowns: string[];
+}
+interface MindMapNode { node_id: string; label: string; evidence: Evidence; children: MindMapNode[] }
+interface MindMap { mindmap_id: string; revision_id: string; created_at: string; root: MindMapNode; mermaid: string }
 interface Guide {
   guide_id: string; revision_id: string; learning_objectives: string[];
   chapters: Chapter[]; details: Record<string, ChapterDetail>;
   practices: Record<string, ChapterPractice>;
+  created_at?: string; provider?: string; model?: string;
 }
 interface JobProgress { phase: string; percent: number }
 interface Job {
@@ -56,9 +65,22 @@ interface Job {
     | "succeeded" | "failed" | "interrupted";
   result?: Record<string, any>; error_code?: string; progress?: JobProgress;
 }
+interface GenerationUsage {
+  requests: number; input_tokens: number | null; output_tokens: number | null;
+  total_tokens: number | null; elapsed_ms: number; cache_hit: boolean;
+  estimated_cost: string | null; currency: string | null;
+}
+interface CacheInventory {
+  request_cache_items: number; request_cache_bytes: number;
+  rebuildable_generation_items: number; rebuildable_generation_bytes: number;
+}
+interface CachePreview {
+  confirmation: string; items: number; reclaimable_bytes: number;
+  guide_ids: string[]; cleared: boolean; scope: "video" | "provider";
+}
 type View = { kind: "outline" } | { kind: "chapter"; chapterId: string }
-  | { kind: "transcript" } | { kind: "practice" } | { kind: "notes" };
-type Pending = "inspect" | "transcript" | "guide" | "detail" | "practice" | "reflection" | "note";
+  | { kind: "transcript" } | { kind: "practice" } | { kind: "notes" } | { kind: "cache" };
+type Pending = "inspect" | "transcript" | "guide" | "detail" | "practice" | "reflection" | "note" | "summary" | "mindmap";
 type WorkspaceStatus = "idle" | "loading" | "ready" | "empty" | "error";
 interface SessionSnapshot {
   inspection: Inspection | undefined; trackId: string | undefined; guide: Guide | undefined; view: View;
@@ -69,6 +91,10 @@ interface SessionSnapshot {
   activeJobId: string | undefined; retryJobId: string | undefined;
   status: string; pending: Pending | undefined;
   jobProgress: { value: JobProgress | undefined; elapsed: number } | undefined;
+}
+interface GuideVersion {
+  guide_id: string; revision_id: string; created_at: string;
+  provider: string | null; model: string | null; track_id: number | string | null;
 }
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:8765";
@@ -145,7 +171,7 @@ function sessionKey(tabId: number, library: string, value: VideoContext): string
 
 export function App({ tabId }: { tabId: number }) {
   const [endpoint, setEndpoint] = useState(DEFAULT_ENDPOINT);
-  const [, setToken] = useState("");
+  const [token, setToken] = useState("");
   const [pairCode, setPairCode] = useState("");
   const [connected, setConnected] = useState(false);
   const [libraries, setLibraries] = useState<Library[]>([]);
@@ -155,6 +181,12 @@ export function App({ tabId }: { tabId: number }) {
   const [inspection, setInspection] = useState<Inspection>();
   const [trackId, setTrackId] = useState<string>();
   const [guide, setGuide] = useState<Guide>();
+  const [guideVersions, setGuideVersions] = useState<GuideVersion[]>([]);
+  const [lastUsage, setLastUsage] = useState<GenerationUsage>();
+  const [studySummary, setStudySummary] = useState<StudySummary>();
+  const [mindMap, setMindMap] = useState<MindMap>();
+  const [cacheInventory, setCacheInventory] = useState<CacheInventory>();
+  const [cachePreview, setCachePreview] = useState<CachePreview>();
   const [transcript, setTranscript] = useState<Transcript>();
   const [preparedTranscript, setPreparedTranscript] = useState<Transcript>();
   const [view, setView] = useState<View>({ kind: "outline" });
@@ -214,6 +246,7 @@ export function App({ tabId }: { tabId: number }) {
     if (previousKey) sessions.current.set(previousKey, snapshot.current);
     const saved = activeScope ? sessions.current.get(activeScope) : undefined;
     setInspection(saved?.inspection); setTrackId(saved?.trackId); setGuide(saved?.guide);
+    setStudySummary(undefined); setMindMap(undefined);
     setTranscript(saved?.transcript); setPreparedTranscript(saved?.preparedTranscript);
     setActiveJobId(saved?.activeJobId); setRetryJobId(saved?.retryJobId);
     setConfirmation(undefined); setFollowTranscript(true);
@@ -314,6 +347,8 @@ export function App({ tabId }: { tabId: number }) {
         });
       }
     });
+    const usage = completed.result?.usage as GenerationUsage | undefined;
+    if (usage && (!ownerKey || activeVideoKey.current === ownerKey)) setLastUsage(usage);
     if (ownerKey) {
       const retryable = completed.status === "failed" || completed.status === "cancelled"
         || completed.status === "interrupted";
@@ -362,22 +397,25 @@ export function App({ tabId }: { tabId: number }) {
 
   const fetchWorkspace = async (
     bvid: string, page: number, libraryName: string,
-  ): Promise<{ guide?: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[]; transcript?: Transcript } | undefined> => {
+  ): Promise<{ guide?: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[]; quiz_attempts?: ReflectionAttempt[]; summaries?: StudySummary[]; mindmaps?: MindMap[]; transcript?: Transcript; guideVersions?: GuideVersion[] } | undefined> => {
     const lookup = await localApi(DefaultService.getVideoWorkspace({
       bvid, page, library: libraryName,
     }));
     if (lookup.bvid !== bvid || lookup.page !== page) {
       throw new Error("workspace 返回了不属于请求 BV/P 的结果。");
     }
+    const guideVersions = lookup.guide_versions ?? [];
     if (!lookup.guide_id && !lookup.revision_id) return undefined;
-    if (lookup.guide_id) return fetchGuideWorkspace(lookup.guide_id, libraryName, bvid, page);
+    if (lookup.guide_id) return {
+      ...await fetchGuideWorkspace(lookup.guide_id, libraryName, bvid, page), guideVersions,
+    };
     const savedTranscript = await localApi(DefaultService.getTranscript({
       revisionId: lookup.revision_id!, library: libraryName,
     })) as Transcript;
     if (savedTranscript.bvid !== bvid || savedTranscript.page !== page) {
       throw new Error("workspace Transcript 不属于请求 BV/P。");
     }
-    return { notes: [], reflections: [], transcript: savedTranscript };
+    return { notes: [], reflections: [], transcript: savedTranscript, guideVersions };
   };
 
   const fetchGuideWorkspace = async (
@@ -385,7 +423,10 @@ export function App({ tabId }: { tabId: number }) {
   ) => {
     const workspace = await localApi(DefaultService.getStudyGuideWorkspace({
       guideId, library: libraryName,
-    })) as unknown as { guide: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[] };
+    })) as unknown as {
+      guide: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[];
+      quiz_attempts: ReflectionAttempt[]; summaries: StudySummary[]; mindmaps: MindMap[];
+    };
     const savedTranscript = await localApi(DefaultService.getTranscript({
       revisionId: workspace.guide.revision_id, library: libraryName,
     })) as Transcript;
@@ -398,7 +439,7 @@ export function App({ tabId }: { tabId: number }) {
 
   const applyWorkspace = (
     ownerKey: string,
-    workspace: { guide?: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[]; transcript?: Transcript } | undefined,
+    workspace: { guide?: Guide; notes: SavedNote[]; reflections: ReflectionAttempt[]; quiz_attempts?: ReflectionAttempt[]; summaries?: StudySummary[]; mindmaps?: MindMap[]; transcript?: Transcript; guideVersions?: GuideVersion[] } | undefined,
   ) => {
     const owner = JSON.parse(ownerKey) as [number, string, string, number];
     const expectedBvid = owner[2]; const expectedPage = owner[3];
@@ -412,7 +453,8 @@ export function App({ tabId }: { tabId: number }) {
     const latestAttempts: Record<string, ReflectionAttempt> = {};
     const restoredFeedbacks: Record<string, Feedback> = {};
     const restoredResponses: Record<string, string> = {};
-    for (const attempt of workspace?.reflections ?? []) {
+    for (const attempt of workspace?.quiz_attempts?.length
+      ? workspace.quiz_attempts : workspace?.reflections ?? []) {
       latestAttempts[attempt.question_id] = attempt;
       restoredResponses[attempt.question_id] = attempt.response;
       if (attempt.status === "succeeded" && attempt.feedback) {
@@ -427,6 +469,8 @@ export function App({ tabId }: { tabId: number }) {
       : "当前知识库中没有该视频的学习记录。";
     if (activeVideoKey.current === ownerKey) {
       setGuide(workspace?.guide); setTranscript(workspace?.transcript);
+      setGuideVersions(workspace?.guideVersions ?? []);
+      setStudySummary(workspace?.summaries?.[0]); setMindMap(workspace?.mindmaps?.[0]);
       setSavedNotes(workspace?.notes ?? []);
       setAttempts(latestAttempts); setWorkspaceStatus(nextStatus); setStatus(nextMessage);
       setResponses((current) => ({ ...restoredResponses, ...current }));
@@ -440,6 +484,62 @@ export function App({ tabId }: { tabId: number }) {
         feedbacks: restoredFeedbacks, workspaceStatus: nextStatus, status: nextMessage,
       });
     }
+  };
+
+  const loadGuideVersion = async (guideId: string) => {
+    if (!activeScope || !video.bvid || !video.page) return;
+    setWorkspaceStatus("loading");
+    try {
+      const workspace = await fetchGuideWorkspace(
+        guideId, library, video.bvid, video.page,
+      );
+      applyWorkspace(activeScope, { ...workspace, guideVersions });
+      setStatus("已加载所选历史版本；证据仍绑定保存时的字幕 revision。");
+    } catch (error) {
+      setWorkspaceStatus("error"); setStatus(`读取历史版本失败：${errorText(error)}`);
+    }
+  };
+
+  const loadCacheInventory = async () => {
+    if (!library) return;
+    try {
+      setCacheInventory(await localApi(DefaultService.getCacheInventory({ library })));
+    } catch (error) { setStatus(errorText(error)); }
+  };
+
+  const pruneCache = async () => {
+    if (!library) return;
+    try {
+      const result = await localApi(DefaultService.pruneCache({ requestBody: { library } }));
+      setStatus(`已清理 ${result.deleted_items} 项孤立请求缓存。`);
+      setCachePreview(undefined); await loadCacheInventory();
+    } catch (error) { setStatus(errorText(error)); }
+  };
+
+  const previewCacheClear = async (scope: "video" | "provider") => {
+    if (!library || (scope === "video" && (!video.bvid || !video.page))
+      || (scope === "provider" && !provider)) return;
+    try {
+      const requestBody = scope === "video"
+        ? { library, bvid: video.bvid!, page: video.page! } : { library, provider };
+      const result = await localApi(DefaultService.clearCache({ requestBody }));
+      setCachePreview({ ...result, scope });
+    } catch (error) { setStatus(errorText(error)); }
+  };
+
+  const confirmCacheClear = async () => {
+    if (!cachePreview || !library) return;
+    try {
+      const requestBody = cachePreview.scope === "video" && video.bvid && video.page
+        ? { library, bvid: video.bvid, page: video.page, confirmation: cachePreview.confirmation }
+        : { library, provider, confirmation: cachePreview.confirmation };
+      const result = await localApi(DefaultService.clearCache({ requestBody }));
+      setCachePreview(undefined); await loadCacheInventory();
+      if (activeScope && video.bvid && video.page) {
+        await loadWorkspace(activeScope, video.bvid, video.page, library);
+      }
+      setStatus(`已删除 ${result.items} 项可重建生成物；字幕与个人内容保持不变。`);
+    } catch (error) { setStatus(errorText(error)); }
   };
 
   const loadWorkspace = async (
@@ -528,6 +628,15 @@ export function App({ tabId }: { tabId: number }) {
       operations.current.delete(operationId);
       finishOwner(ownerKey);
     }
+  };
+
+  const reconnect = async () => {
+    if (!token) { setStatus("没有可用配对信息，请重新配对。"); return; }
+    configure(endpoint, token); setStatus("正在重新连接本地服务…");
+    try {
+      await localApi(DefaultService.health()); await loadLibraries(); setConnected(true);
+      setStatus("本地服务已重新连接。");
+    } catch (error) { setConnected(false); setStatus(errorText(error)); }
   };
 
   const inspect = async () => {
@@ -702,7 +811,8 @@ export function App({ tabId }: { tabId: number }) {
     const ownerGuideId = guide.guide_id; const ownerLibrary = library;
     try {
       const existing = await loadWorkspace(ownerKey, video.bvid, video.page, ownerLibrary);
-      const matched = [...(existing?.reflections ?? [])].reverse().find((attempt) =>
+      const matched = [...(existing?.quiz_attempts?.length
+        ? existing.quiz_attempts : existing?.reflections ?? [])].reverse().find((attempt) =>
         attempt.question_id === questionId && attempt.response === response
         && attempt.status === "succeeded" && attempt.feedback);
       if (matched?.feedback) {
@@ -716,7 +826,7 @@ export function App({ tabId }: { tabId: number }) {
     if (!provider) { setStatus("生成新反馈需要填写 Provider。"); return; }
     setPending("reflection"); setJobProgress(undefined); setStatus("正在依据字幕证据评阅…");
     try {
-      const accepted = await localApi(DefaultService.createReflection({ requestBody: {
+      const accepted = await localApi(DefaultService.createQuizAttempt({ requestBody: {
         library: ownerLibrary, provider, guide_id: ownerGuideId, question_id: questionId,
         response,
       } }));
@@ -730,6 +840,34 @@ export function App({ tabId }: { tabId: number }) {
       if (activeVideoKey.current === ownerKey) setStatus("证据反馈已生成。");
     } catch (error) { if (activeVideoKey.current === ownerKey) setStatus(errorText(error)); }
     finally { finishOwner(ownerKey); }
+  };
+
+  const generateStudyArtifact = async (kind: "summary" | "mindmap") => {
+    const ownerKey = activeVideoKey.current;
+    if (!guide || !ownerKey || !provider) {
+      setStatus("生成总结或导图需要已有大纲和 Provider。"); return;
+    }
+    const ownerGuideId = guide.guide_id; const ownerLibrary = library;
+    setPending(kind); setJobProgress(undefined);
+    setStatus(kind === "summary" ? "正在生成证据化总结…" : "正在生成受限导图树…");
+    try {
+      const requestBody = { library: ownerLibrary, provider };
+      const accepted = kind === "summary"
+        ? await localApi(DefaultService.createStudySummary({
+          guideId: ownerGuideId, requestBody,
+        }))
+        : await localApi(DefaultService.createMindMap({
+          guideId: ownerGuideId, requestBody,
+        }));
+      const job = await trackJob(accepted.job_id, ownerKey);
+      if (job.status !== "succeeded") throw jobError(job, "生成失败");
+      applyWorkspace(ownerKey, await fetchGuideWorkspace(ownerGuideId, ownerLibrary));
+      if (activeVideoKey.current === ownerKey) {
+        setStatus(kind === "summary" ? "证据化总结已保存。" : "导图已验证并保存为 Mermaid。");
+      }
+    } catch (error) {
+      if (activeVideoKey.current === ownerKey) setStatus(errorText(error));
+    } finally { finishOwner(ownerKey); }
   };
 
   const highlighted = useMemo(
@@ -782,8 +920,17 @@ export function App({ tabId }: { tabId: number }) {
       {activeJobId && <button className="quiet compact" onClick={stopJob}>停止任务</button>}
     </div>}
     {!activeJobId && retryJobId && <button className="quiet" onClick={retryJob}>重试上次任务</button>}
+    {lastUsage && <p className="muted-text" aria-label="最近生成用量">
+      最近生成：{lastUsage.requests} 次请求 · 输入 {lastUsage.input_tokens ?? "未知"} token ·
+      输出 {lastUsage.output_tokens ?? "未知"} token ·
+      {lastUsage.estimated_cost !== null
+        ? `估算成本 ${lastUsage.estimated_cost} ${lastUsage.currency ?? ""}` : "成本未知"}
+      {lastUsage.cache_hit ? " · 缓存命中" : ""}
+    </p>}
+    {guide && highlighted && view.kind !== "chapter" && <button className="quiet" onClick={() => setView({ kind: "chapter", chapterId: highlighted.chapter_id })}>返回当前章节：{highlighted.title}</button>}
 
     {!connected && <section><h2>连接本地服务</h2>
+      {token && <button className="quiet" onClick={() => void reconnect()}>重新连接</button>}
       <label>地址<input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label>
       <label>配对码<input value={pairCode} onChange={(event) => setPairCode(event.target.value.toUpperCase())} placeholder="运行 bili-study plugin pair" /></label>
       <button disabled={Boolean(pending) || !pairCode} onClick={pair}>配对</button>
@@ -828,11 +975,36 @@ export function App({ tabId }: { tabId: number }) {
         <div className="row"><button onClick={() => generateGuide(confirmation.regenerate, true)}>确认并开始</button><button className="quiet" onClick={() => setConfirmation(undefined)}>取消</button></div>
       </section>}
       {guide && <section><div className="row"><h2>学习大纲</h2><button className="quiet compact" disabled={Boolean(pending)} onClick={() => generateGuide(true)}>重新生成</button></div>
+        {guideVersions.length > 1 && <label>其他版本<select aria-label="其他版本" value={guide.guide_id}
+          onChange={(event) => void loadGuideVersion(event.target.value)}>
+          {guideVersions.map((version) => <option key={version.guide_id} value={version.guide_id}>
+            {version.created_at || "时间未知"} · {version.provider ?? "Provider 未记录"} / {version.model ?? "模型未记录"}
+          </option>)}
+        </select></label>}
+        <p className="muted-text">绑定字幕 revision <code>{guide.revision_id}</code>
+          {transcript && <> · 轨道 {transcript.display_name} ({transcript.track_id ?? "旧记录未保存"})</>}
+          {guide.provider && <> · {guide.provider}{guide.model ? ` / ${guide.model}` : ""}</>}
+          {guide.created_at && <> · {guide.created_at}</>}
+        </p>
         <ul>{guide.learning_objectives.map((objective) => <li key={objective}>{objective}</li>)}</ul>
         <div className="chapter-list">{guide.chapters.map((chapter) => <button key={chapter.chapter_id} className={`chapter-card ${highlighted?.chapter_id === chapter.chapter_id ? "active" : ""}`} onClick={() => setView({ kind: "chapter", chapterId: chapter.chapter_id })}>
           <span className="chapter-heading"><strong>{chapter.title}</strong><span>{formatTime(chapter.start_ms)}</span></span>
           <span>{chapter.summary}</span>
         </button>)}</div>
+      </section>}
+      {guide && <section><h2>总结与导图</h2><div className="row">
+        <button disabled={Boolean(pending) || !provider} onClick={() => void generateStudyArtifact("summary")}>{studySummary ? "重新生成总结" : "生成证据化总结"}</button>
+        <button disabled={Boolean(pending) || !provider} onClick={() => void generateStudyArtifact("mindmap")}>{mindMap ? "重新生成导图" : "生成导图"}</button>
+      </div>
+        {studySummary && <div aria-label="证据化总结"><h3>学习目标</h3><ul>{studySummary.learning_goals.map((item) => <li key={item.text}>{item.text}</li>)}</ul>
+          <h3>章节结论</h3><ul>{studySummary.chapter_conclusions.map((item) => <li key={item.text}>{item.text}</li>)}</ul>
+          <h3>关键联系</h3><ul>{studySummary.key_connections.map((item) => <li key={item.text}>{item.text}</li>)}</ul>
+          <h3>字幕无法判断</h3>{studySummary.unknowns.length ? <ul>{studySummary.unknowns.map((item) => <li key={item}>{item}</li>)}</ul> : <p>无</p>}
+        </div>}
+        {mindMap && <div aria-label="学习导图"><h3>学习导图</h3><StrictMermaid source={mindMap.mermaid} />
+          <details><summary>无障碍树状文本</summary><ul className="mindmap-tree"><MindMapView node={mindMap.root} /></ul></details>
+          <details><summary>本地生成的 Mermaid 源码</summary><pre>{mindMap.mermaid}</pre></details>
+        </div>}
       </section>}
     </>}
 
@@ -876,7 +1048,7 @@ export function App({ tabId }: { tabId: number }) {
         {!selectedPractice && selectedPracticeChapter && <button disabled={Boolean(pending) || workspaceStatus === "loading"} onClick={() => loadPractice(selectedPracticeChapter.chapter_id)}>生成本章练习</button>}
         {selectedPractice?.questions.map((question) => <div className="question" key={question.question_id}><p>{question.text}</p>
           <textarea value={responses[question.question_id] ?? ""} onChange={(event) => setResponses({ ...responses, [question.question_id]: event.target.value })} placeholder="回答或复述" />
-          <div className="row"><button disabled={Boolean(pending) || !responses[question.question_id]?.trim()} onClick={() => reflect(question.question_id)}>获取证据反馈</button><button className="quiet" onClick={() => seek(question.start_ms)}>回看证据</button></div>
+          <div className="row"><button disabled={Boolean(pending) || !responses[question.question_id]?.trim()} onClick={() => reflect(question.question_id)}>获取证据反馈</button>{attempts[question.question_id] && <button className="quiet" onClick={() => seek(question.start_ms)}>回看证据</button>}</div>
           {attempts[question.question_id]?.status === "feedback_failed" && <p className="muted-text">上次回答已保存，但反馈生成失败，可以重试。</p>}
           {feedbacks[question.question_id] && <FeedbackView feedback={feedbacks[question.question_id]!} />}
         </div>)}
@@ -894,11 +1066,29 @@ export function App({ tabId }: { tabId: number }) {
       </>}
     </section>}
 
+    {connected && view.kind === "cache" && <section className="page"><h2>缓存管理</h2>
+      <p className="muted-text">这里只清理可重建内容；字幕、笔记、作答和复述始终受保护。</p>
+      {!cacheInventory ? <button onClick={() => void loadCacheInventory()}>读取缓存状态</button> : <dl>
+        <div><dt>请求缓存</dt><dd>{cacheInventory.request_cache_items} 项 / {cacheInventory.request_cache_bytes} 字节</dd></div>
+        <div><dt>可重建生成物</dt><dd>{cacheInventory.rebuildable_generation_items} 项 / {cacheInventory.rebuildable_generation_bytes} 字节</dd></div>
+      </dl>}
+      <div className="row"><button className="quiet" onClick={() => void pruneCache()}>清理孤立缓存</button>
+        <button className="quiet" disabled={!video.bvid || !video.page} onClick={() => void previewCacheClear("video")}>预览当前视频生成物</button>
+        <button className="quiet" disabled={!provider} onClick={() => void previewCacheClear("provider")}>预览当前 Provider 生成物</button></div>
+      {cachePreview && <div className="confirmation" aria-label="缓存清理确认"><h3>确认清理范围</h3>
+        <p>{cachePreview.items} 项，可回收约 {cachePreview.reclaimable_bytes} 字节。</p>
+        <p className="muted-text">范围变化时确认会被拒绝；受保护内容不会删除。</p>
+        <div className="row"><button disabled={cachePreview.items === 0} onClick={() => void confirmCacheClear()}>确认删除可重建内容</button>
+          <button className="quiet" onClick={() => setCachePreview(undefined)}>取消</button></div>
+      </div>}
+    </section>}
+
     {connected && <nav aria-label="学习功能">
-      <button className={view.kind === "outline" || view.kind === "chapter" ? "selected" : ""} onClick={() => setView({ kind: "outline" })}>大纲</button>
-      <button className={view.kind === "transcript" ? "selected" : ""} onClick={() => setView({ kind: "transcript" })}>字幕</button>
-      <button className={view.kind === "practice" ? "selected" : ""} onClick={() => setView({ kind: "practice" })}>练习</button>
-      <button className={view.kind === "notes" ? "selected" : ""} onClick={() => setView({ kind: "notes" })}>笔记</button>
+      <button aria-pressed={view.kind === "outline" || view.kind === "chapter"} className={view.kind === "outline" || view.kind === "chapter" ? "selected" : ""} onClick={() => setView({ kind: "outline" })}>大纲</button>
+      <button aria-pressed={view.kind === "transcript"} className={view.kind === "transcript" ? "selected" : ""} onClick={() => setView({ kind: "transcript" })}>字幕</button>
+      <button aria-pressed={view.kind === "practice"} className={view.kind === "practice" ? "selected" : ""} onClick={() => setView({ kind: "practice" })}>练习</button>
+      <button aria-pressed={view.kind === "notes"} className={view.kind === "notes" ? "selected" : ""} onClick={() => setView({ kind: "notes" })}>笔记</button>
+      <button aria-pressed={view.kind === "cache"} className={view.kind === "cache" ? "selected" : ""} onClick={() => setView({ kind: "cache" })}>缓存</button>
     </nav>}
   </main>;
 }
@@ -919,4 +1109,34 @@ function FeedbackView({ feedback }: { feedback: Feedback }) {
     {feedback.missing.length > 0 && <><h3>可以补充</h3><ul>{feedback.missing.map((item) => <li key={item}>{item}</li>)}</ul></>}
     {feedback.misconceptions.length > 0 && <><h3>可能的误解</h3><ul>{feedback.misconceptions.map((item) => <li key={item}>{item}</li>)}</ul></>}
   </div>;
+}
+
+function MindMapView({ node }: { node: MindMapNode }) {
+  return <li><span>{node.label}</span>
+    {node.children.length > 0 && <ul>{node.children.map((child) =>
+      <MindMapView key={child.node_id} node={child} />)}</ul>}
+  </li>;
+}
+
+function StrictMermaid({ source }: { source: string }) {
+  const reactId = useId();
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setSvg("");
+    setError(false);
+    void import("mermaid").then(async ({ default: mermaid }) => {
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+      const id = `mindmap-${reactId.replace(/[^A-Za-z0-9_-]/g, "")}`;
+      const rendered = await mermaid.render(id, source);
+      if (active) setSvg(rendered.svg);
+    }).catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [reactId, source]);
+
+  if (error) return <p role="alert">导图渲染失败，可展开树状文本查看。</p>;
+  if (!svg) return <p aria-live="polite">正在渲染导图…</p>;
+  return <div className="mermaid-output" role="img" aria-label="学习导图" dangerouslySetInnerHTML={{ __html: svg }} />;
 }

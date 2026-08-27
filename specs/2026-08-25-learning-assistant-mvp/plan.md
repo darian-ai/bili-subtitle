@@ -44,14 +44,14 @@
 
 ## 2. 建立 v4 持久化与已有内容查询
 
-- [ ] 先写 v3→v4 migration、备份/回滚、旧指南 backfill 和多版本排序测试，再实现来源索引及新表。
-- [ ] 实现本地 guide 列表与聚合 workspace 接口，保证旧指南和个人内容均可恢复。
+- [x] 先写 v3→v4 migration、备份/回滚、旧指南 backfill 和多版本排序测试，再实现来源索引及新表。
+- [x] 实现本地 guide 列表与聚合 workspace 接口，保证旧指南和个人内容均可恢复。
 - [x] 增量实现按 BV/P 查询最近指南的只读 workspace 接口，为侧栏重开恢复提供零模型请求路径；完整 v4 聚合模型和历史版本列表仍待实现。
 
 ## 3. 在侧栏自动恢复完整学习状态
 
-- [ ] 打开 BV/P 后直接加载最新本地版本，不检查字幕、不要求 Provider、不调用模型，并提供历史版本选择。
-- [ ] 显示保存时的 revision/轨道/Provider 信息；字幕更新后旧内容只保持原证据语义。
+- [x] 打开 BV/P 后直接加载最新本地版本，不检查字幕、不要求 Provider、不调用模型，并提供历史版本选择。
+- [x] 显示保存时的 revision/轨道/Provider 信息；字幕更新后旧内容只保持原证据语义。
 - [ ] 当前 BV/P 存在指南时读取完整本地 workspace；普通大纲、详情、练习和相同回答反馈均零模型复用，标签页切换及同标签页 A→B→A 不覆盖内容。自动化已完成，待真实复验。
 
 ## 4. 加固持久任务生命周期
@@ -61,35 +61,35 @@
 
 ## 5. 接入用量、成本与分层缓存管理
 
-- [ ] 扩展 Provider 配置、GenerationUsage、Decimal 估算和未知值展示，保持旧配置兼容。
-- [ ] 实现缓存 inventory、默认 prune、带预览和二次确认的生成物 clear，保护全部来源与个人内容。
+- [x] 扩展 Provider 配置、GenerationUsage、Decimal 估算和未知值展示，保持旧配置兼容。
+- [x] 实现缓存 inventory、默认 prune、带预览和二次确认的生成物 clear，保护全部来源与个人内容。
 
 ## 6. 将按章练习升级为持久主动小测
 
-- [ ] 隐藏答案依据和证据，持久保存用户作答，再生成证据化定性反馈。
-- [ ] workspace 恢复小测尝试和反馈；数字评分、置信度和复习队列继续延后。
+- [x] 隐藏答案依据和证据，持久保存用户作答，再生成证据化定性反馈。
+- [x] workspace 恢复小测尝试和反馈；数字评分、置信度和复习队列继续延后。
 - [x] 反馈生成前持久保存用户原始回答，成功与失败状态均可从 SQLite 读取；完整 QuizAttempt DTO 和 workspace 恢复仍待实现。
 
 ## 7. 实现证据化总结与 Mermaid 导图
 
-- [ ] 总结只使用 Transcript 和已验证生成物，不读取个人内容；结构、引用和无证据拒答均本地校验。
-- [ ] 验证 MindMapTree 后由本地确定性生成 Mermaid，完成严格渲染、Markdown 发布和注入测试。
+- [x] 总结只使用 Transcript 和已验证生成物，不读取个人内容；结构、引用和无证据拒答均本地校验。
+- [x] 验证 MindMapTree 后由本地确定性生成 Mermaid，完成严格渲染、Markdown 发布和注入测试。
 
 ## 8. 改善长视频、错误恢复与无障碍
 
-- [ ] 重构侧栏状态加载与任务反馈；本轮已提供取消、重试和字幕页，返回当前章节、重连和历史版本入口仍待完成。
-- [ ] 完成键盘、焦点、语义、ARIA、对比度、减少动画和响应宽度门禁。
+- [x] 重构侧栏状态加载与任务反馈；已提供取消、重试、字幕页、返回当前章节、重连和历史版本入口。
+- [x] 完成键盘、焦点、语义、ARIA、对比度、减少动画和响应宽度门禁。
 - [x] 增加字幕轨道 ID 轮换恢复、歧义错误提示、标签页定向消息和后台任务按 scope 保存进度。
 - [ ] 完成 tab-specific panel 的 Chrome/Edge 真实复验：每个视频标签页点击一次、非视频页不显示、返回原标签页恢复原实例。
 
 ## 9. 完成交付文档和 0.2.0 归档
 
-- [ ] 编写安装、升级、迁移、隐私、排障、Provider 兼容、成本与缓存说明。
-- [ ] 更新双命令发行、Chrome/Edge 可复现归档、哈希、许可证及秘密扫描门禁。
+- [x] 编写安装、升级、迁移、隐私、排障、Provider 兼容、成本与缓存说明。
+- [x] 更新双命令发行、Chrome/Edge 可复现归档、哈希、许可证及秘密扫描门禁。
 
 ## 10. 验证、真实使用与阶段关闭
 
-- [ ] 执行 [`validation.md`](./validation.md) 的全量 Python、Extension、E2E、迁移、安全和 V1 回归。
+- [x] 执行 [`validation.md`](./validation.md) 的全量 Python、Extension、E2E、迁移、安全和 V1 回归。
 - [ ] 完成真实 Chrome/Edge MVP 脱敏验收和待合并 CI；全部通过后更新 Constitution 并发布 `0.2.0`。
 
-本轮自动化结果：Python 289 项通过、覆盖率 90.06%，Ruff format/lint、strict Pyright 与 `git diff --check` 通过；Extension OpenAPI 漂移、TypeScript、ESLint、29 项 Vitest、3 项 Playwright 以及 Chrome/Edge 生产构建通过。三个已知 BV/P 的连续真实 WBI 请求均命中预期轨道与正文；本地服务已在空测试库上重启并通过健康检查。真实侧边栏跨页面复验仍由用户完成，不以本轮自动化替代。
+本轮自动化结果：Python 315 项通过、覆盖率 90.08%，Ruff format/lint、strict Pyright、许可证/秘密扫描、wheel/sdist、sdist 重建、隔离双命令安装与 `git diff --check` 通过；Extension OpenAPI 重新生成、TypeScript、ESLint、30 项 Vitest、3 项 Playwright、Chrome/Edge 生产构建、确定性归档及 SHA-256 清单通过。三个已知 BV/P 的连续真实 WBI 请求均命中预期轨道与正文；本地服务此前已在空测试库上重启并通过健康检查。真实侧边栏跨页面、真实 Provider 重启/取消和待合并 CI 仍须真实复验，不以自动化替代。

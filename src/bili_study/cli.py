@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated
 
@@ -20,6 +21,7 @@ from bili_study.provider import (
 )
 from bili_study.services import (
     GuideGenerator,
+    generation_usage,
     guide_from_payload,
     import_bilibili_json,
     render_guide_markdown,
@@ -132,12 +134,31 @@ def provider_set(
     api_key: Annotated[str, typer.Option(prompt=True, hide_input=True)],
     output_language: str = "zh-CN",
     context_budget: int = 12000,
+    input_price_per_million: str | None = None,
+    output_price_per_million: str | None = None,
+    currency: str | None = None,
 ) -> None:
     """保存非秘密 Provider 配置，并把 Key 写入 Credential Manager。"""
     try:
-        config = ProviderConfig(name, base_url, model, output_language, context_budget)
+        config = ProviderConfig(
+            name,
+            base_url,
+            model,
+            output_language,
+            context_budget,
+            input_price_per_million=(
+                Decimal(input_price_per_million) if input_price_per_million is not None else None
+            ),
+            output_price_per_million=(
+                Decimal(output_price_per_million) if output_price_per_million is not None else None
+            ),
+            currency=currency.upper() if currency else None,
+        )
         ProviderConfigStore(_paths()).set(config)
         ProviderSecretStore().set(name, api_key)
+    except InvalidOperation:
+        _known_error(ProviderError("Provider 单价格式无效。"))
+        return
     except (ProviderError, StorageError) as exc:
         _known_error(exc)
         return
@@ -152,9 +173,14 @@ def provider_show(name: str) -> None:
     except (ProviderError, StorageError) as exc:
         _known_error(exc)
         return
+    input_price = config.input_price_per_million
+    output_price = config.output_price_per_million
     typer.echo(
         f"名称：{config.name}\nBase URL：{config.base_url}\n模型：{config.model}\n"
         f"输出语言：{config.output_language}\n上下文预算：{config.context_budget}"
+        f"\n输入单价/百万 token：{input_price if input_price is not None else '未设置'}"
+        f"\n输出单价/百万 token：{output_price if output_price is not None else '未设置'}"
+        f"\n币种：{config.currency or '未设置'}"
     )
 
 
@@ -260,6 +286,14 @@ def guide_generate(
     typer.echo(
         f"学习指南：{result.guide.guide_id}\n文件：{target}\n"
         f"请求：{result.metrics.requests}，缓存：{'命中' if result.metrics.cache_hit else '未命中'}"
+    )
+    usage = generation_usage(result.metrics, config)
+    typer.echo(
+        f"Token：输入 {usage['input_tokens'] if usage['input_tokens'] is not None else '未知'}，"
+        f"输出 {usage['output_tokens'] if usage['output_tokens'] is not None else '未知'}；"
+        f"估算成本：{usage['estimated_cost']} {usage['currency']}"
+        if usage["estimated_cost"] is not None
+        else "估算成本：未知"
     )
 
 

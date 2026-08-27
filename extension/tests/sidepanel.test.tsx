@@ -28,7 +28,13 @@ vi.mock("../src/api", () => ({
     createChapterDetail: () => ({ operation: "detail" }),
     createChapterPractice: () => ({ operation: "practice" }),
     createReflection: () => ({ operation: "reflection" }),
+    createQuizAttempt: () => ({ operation: "reflection" }),
+    createStudySummary: () => ({ operation: "summary" }),
+    createMindMap: () => ({ operation: "mindmap" }),
     createNote: () => ({ operation: "note" }),
+    getCacheInventory: (args: unknown) => ({ operation: "cache-inventory", args }),
+    pruneCache: (args: unknown) => ({ operation: "cache-prune", args }),
+    clearCache: (args: unknown) => ({ operation: "cache-clear", args }),
     pair: () => ({ operation: "pair" }),
   },
 }));
@@ -119,6 +125,15 @@ beforeEach(async () => {
       revision_id: (mocks.storedGuide || mocks.transcriptOnly)
         && request.args?.bvid === "BV1xx411c7mD" ? "revision-1" : null,
     };
+    if (request.operation === "cache-inventory") return {
+      request_cache_items: 2, request_cache_bytes: 128,
+      rebuildable_generation_items: 1, rebuildable_generation_bytes: 64,
+    };
+    if (request.operation === "cache-prune") return { deleted_items: 1, reclaimed_bytes: 16 };
+    if (request.operation === "cache-clear") return {
+      confirmation: "a".repeat(64), items: 1, reclaimable_bytes: 64,
+      guide_ids: ["guide-1"], cleared: Boolean(request.args?.requestBody?.confirmation),
+    };
     if (request.operation === "job" && request.jobId === "inspect-job") return {
       status: "succeeded", progress: { phase: "completed", percent: 100 },
       result: {
@@ -166,6 +181,24 @@ it("shows both the global collection position and the selected P", async () => {
   expect(container.textContent).toContain("合集第 30 / 64 项 · P6 · 0:12");
 });
 
+it("previews and confirms only rebuildable cache content", async () => {
+  await flush(() => button("缓存").click());
+  expect(container.textContent).toContain("字幕、笔记、作答和复述始终受保护");
+  await flush(() => button("读取缓存状态").click());
+  expect(container.textContent).toContain("2 项 / 128 字节");
+  expect(container.textContent).toContain("1 项 / 64 字节");
+  await flush(() => button("预览当前视频生成物").click());
+  expect(container.textContent).toContain("1 项，可回收约 64 字节");
+  await flush(() => button("确认删除可重建内容").click());
+  const clearCalls = mocks.localApi.mock.calls
+    .map(([request]) => request)
+    .filter((request) => request.operation === "cache-clear");
+  expect(clearCalls).toHaveLength(2);
+  expect(clearCalls[0].args.requestBody.confirmation).toBeUndefined();
+  expect(clearCalls[1].args.requestBody.confirmation).toBe("a".repeat(64));
+  expect(container.textContent).toContain("字幕与个人内容保持不变");
+});
+
 it("uses one coherent waiting status while a supported page is transitioning", async () => {
   const listener = (chrome.runtime.onMessage.addListener as ReturnType<typeof vi.fn>)
     .mock.calls[0]![0] as (message: unknown) => void;
@@ -189,9 +222,12 @@ it("keeps outline, practice, and notes on separate pages", async () => {
   await flush(() => button("确认并开始").click());
   expect(container.textContent).toContain("主要章节");
   expect(container.textContent).not.toContain("核心是什么？");
+  expect(button("大纲").getAttribute("aria-pressed")).toBe("true");
 
   await flush(() => button("练习").click());
+  expect(button("练习").getAttribute("aria-pressed")).toBe("true");
   expect(container.textContent).toContain("核心是什么？");
+  expect(container.textContent).not.toContain("回看证据");
   expect(container.textContent).not.toContain("当前视频");
 
   await flush(() => button("笔记").click());

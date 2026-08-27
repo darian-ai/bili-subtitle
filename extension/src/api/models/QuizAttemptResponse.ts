@@ -2,16 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export type ReflectionAttemptResponse = {
+export type QuizAttemptResponse = {
+    attempt_id: string;
     feedback?: (Record<string, any> | null);
     guide_id: string;
     question_id: string;
-    reflection_id: string;
     response: string;
-    status: ReflectionAttemptResponse.status;
-    submitted_at?: (string | null);
+    revision_id: string;
+    status: QuizAttemptResponse.status;
+    submitted_at: string;
 };
-export namespace ReflectionAttemptResponse {
+export namespace QuizAttemptResponse {
     export enum status {
         PENDING = 'pending',
         SUCCEEDED = 'succeeded',

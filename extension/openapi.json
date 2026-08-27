@@ -1,6 +1,151 @@
 {
   "components": {
     "schemas": {
+      "CacheClearRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bvid": {
+            "anyOf": [
+              {
+                "pattern": "^BV[A-Za-z0-9]{10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bvid"
+          },
+          "confirmation": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation"
+          },
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "library"
+        ],
+        "title": "CacheClearRequest",
+        "type": "object"
+      },
+      "CacheClearResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cleared": {
+            "title": "Cleared",
+            "type": "boolean"
+          },
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "guide_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Guide Ids",
+            "type": "array"
+          },
+          "items": {
+            "title": "Items",
+            "type": "integer"
+          },
+          "reclaimable_bytes": {
+            "title": "Reclaimable Bytes",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmation",
+          "items",
+          "reclaimable_bytes",
+          "guide_ids",
+          "cleared"
+        ],
+        "title": "CacheClearResponse",
+        "type": "object"
+      },
+      "CacheInventoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "rebuildable_generation_bytes": {
+            "title": "Rebuildable Generation Bytes",
+            "type": "integer"
+          },
+          "rebuildable_generation_items": {
+            "title": "Rebuildable Generation Items",
+            "type": "integer"
+          },
+          "request_cache_bytes": {
+            "title": "Request Cache Bytes",
+            "type": "integer"
+          },
+          "request_cache_items": {
+            "title": "Request Cache Items",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_cache_items",
+          "request_cache_bytes",
+          "rebuildable_generation_items",
+          "rebuildable_generation_bytes"
+        ],
+        "title": "CacheInventoryResponse",
+        "type": "object"
+      },
       "ChapterDetailRequest": {
         "additionalProperties": false,
         "properties": {
@@ -45,6 +190,29 @@
           "provider"
         ],
         "title": "ChapterPracticeRequest",
+        "type": "object"
+      },
+      "GeneratedStudyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "provider"
+        ],
+        "title": "GeneratedStudyRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -188,6 +356,78 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "LibraryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library"
+        ],
+        "title": "LibraryRequest",
+        "type": "object"
+      },
+      "MindMapResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "mermaid": {
+            "title": "Mermaid",
+            "type": "string"
+          },
+          "mindmap_id": {
+            "title": "Mindmap Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "root": {
+            "additionalProperties": true,
+            "title": "Root",
+            "type": "object"
+          },
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "mindmap_id",
+          "guide_id",
+          "revision_id",
+          "created_at",
+          "provider",
+          "model",
+          "root",
+          "mermaid",
+          "usage"
+        ],
+        "title": "MindMapResponse",
+        "type": "object"
+      },
       "NoteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -313,6 +553,111 @@
         "title": "PersonalNoteResponse",
         "type": "object"
       },
+      "QuizAttemptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "guide_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "response": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Response",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "provider",
+          "guide_id",
+          "question_id",
+          "response"
+        ],
+        "title": "QuizAttemptRequest",
+        "type": "object"
+      },
+      "QuizAttemptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "response": {
+            "title": "Response",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "succeeded",
+              "feedback_failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "guide_id",
+          "revision_id",
+          "question_id",
+          "response",
+          "submitted_at",
+          "status"
+        ],
+        "title": "QuizAttemptResponse",
+        "type": "object"
+      },
       "ReflectionAttemptResponse": {
         "additionalProperties": false,
         "properties": {
@@ -352,6 +697,17 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
           }
         },
         "required": [
@@ -456,6 +812,149 @@
         "title": "SourceRequest",
         "type": "object"
       },
+      "StoredGuideSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "track_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Id"
+          }
+        },
+        "required": [
+          "guide_id",
+          "revision_id",
+          "created_at",
+          "provider",
+          "model",
+          "track_id"
+        ],
+        "title": "StoredGuideSummary",
+        "type": "object"
+      },
+      "StudySummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chapter_conclusions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Chapter Conclusions",
+            "type": "array"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "key_connections": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Key Connections",
+            "type": "array"
+          },
+          "learning_goals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Learning Goals",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "summary_id": {
+            "title": "Summary Id",
+            "type": "string"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknowns",
+            "type": "array"
+          },
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "summary_id",
+          "guide_id",
+          "revision_id",
+          "created_at",
+          "provider",
+          "model",
+          "learning_goals",
+          "chapter_conclusions",
+          "key_connections",
+          "unknowns",
+          "usage"
+        ],
+        "title": "StudySummaryResponse",
+        "type": "object"
+      },
       "StudyWorkspaceResponse": {
         "additionalProperties": false,
         "properties": {
@@ -464,11 +963,25 @@
             "title": "Guide",
             "type": "object"
           },
+          "mindmaps": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapResponse"
+            },
+            "title": "Mindmaps",
+            "type": "array"
+          },
           "notes": {
             "items": {
               "$ref": "#/components/schemas/PersonalNoteResponse"
             },
             "title": "Notes",
+            "type": "array"
+          },
+          "quiz_attempts": {
+            "items": {
+              "$ref": "#/components/schemas/QuizAttemptResponse"
+            },
+            "title": "Quiz Attempts",
             "type": "array"
           },
           "reflections": {
@@ -483,6 +996,13 @@
             "default": 1,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "summaries": {
+            "items": {
+              "$ref": "#/components/schemas/StudySummaryResponse"
+            },
+            "title": "Summaries",
+            "type": "array"
           }
         },
         "required": [
@@ -815,6 +1335,13 @@
             ],
             "title": "Guide Id"
           },
+          "guide_versions": {
+            "items": {
+              "$ref": "#/components/schemas/StoredGuideSummary"
+            },
+            "title": "Guide Versions",
+            "type": "array"
+          },
           "page": {
             "title": "Page",
             "type": "integer"
@@ -860,6 +1387,140 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/cache": {
+      "get": {
+        "operationId": "getCacheInventory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheInventoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Cache Inventory"
+      }
+    },
+    "/api/v1/cache/clear": {
+      "post": {
+        "operationId": "clearCache",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CacheClearRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheClearResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Clear Cache"
+      }
+    },
+    "/api/v1/cache/prune": {
+      "post": {
+        "operationId": "pruneCache",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Prunecache",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Prune Cache"
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "health",
@@ -1120,6 +1781,49 @@
           }
         },
         "summary": " Pair"
+      }
+    },
+    "/api/v1/quiz-attempts": {
+      "post": {
+        "operationId": "createQuizAttempt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizAttemptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Create Quiz Attempt"
       }
     },
     "/api/v1/reflections": {
@@ -1442,6 +2146,171 @@
           }
         ],
         "summary": " Create Chapter Practice"
+      }
+    },
+    "/api/v1/study-guides/{guide_id}/mindmap": {
+      "post": {
+        "operationId": "createMindMap",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedStudyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Create Mindmap"
+      }
+    },
+    "/api/v1/study-guides/{guide_id}/quiz-attempts": {
+      "get": {
+        "operationId": "listQuizAttempts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QuizAttemptResponse"
+                  },
+                  "title": "Response Listquizattempts",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " List Quiz Attempts"
+      }
+    },
+    "/api/v1/study-guides/{guide_id}/summary": {
+      "post": {
+        "operationId": "createStudySummary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedStudyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Create Summary"
       }
     },
     "/api/v1/study-guides/{guide_id}/workspace": {

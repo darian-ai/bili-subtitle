@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from bili_study.domain import build_transcript, new_note
+from bili_study.services import guide_from_payload, guide_to_payload
 from bili_study.storage import (
     AppPaths,
     LibraryRegistry,
@@ -174,6 +175,61 @@ def test_repository_migration_backup_and_corruption(tmp_path: Path) -> None:
         StudyRepository(corrupt)
 
 
+def test_v3_migration_backfills_source_index_and_orders_guide_versions(tmp_path: Path) -> None:
+    database = tmp_path / "version-three.sqlite3"
+    older = transcript()
+    newer = replace(transcript(("更新字幕",)), created_at="2026-08-23T00:00:00+00:00")
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE transcripts (
+                revision_id TEXT PRIMARY KEY, content_hash TEXT NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE TABLE guides (
+                guide_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL,
+                fingerprint TEXT NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX guide_fingerprint ON guides(fingerprint);
+            PRAGMA user_version = 3;
+            """
+        )
+        for revision in (older, newer):
+            connection.execute(
+                "INSERT INTO transcripts VALUES (?, ?, ?)",
+                (revision.revision_id, revision.content_sha256, json.dumps(asdict(revision))),
+            )
+            payload = {
+                "learning_objectives": ["目标"],
+                "chapters": [
+                    {
+                        "title": "章节",
+                        "summary": "总结",
+                        "evidence": {
+                            "revision_id": revision.revision_id,
+                            "start_cue_id": "c000001",
+                            "end_cue_id": revision.cues[-1].cue_id,
+                        },
+                    }
+                ],
+                "created_at": revision.created_at,
+                "provider": "provider-a",
+                "model": "model-a",
+            }
+            guide = guide_from_payload(payload, revision, revision.revision_id, "zh-CN")
+            payload = {**guide_to_payload(guide), "provider": "provider-a", "model": "model-a"}
+            connection.execute(
+                "INSERT INTO guides VALUES (?, ?, ?, ?)",
+                (guide.guide_id, revision.revision_id, guide.fingerprint, json.dumps(payload)),
+            )
+
+    repository = StudyRepository(database)
+    assert database.with_suffix(".sqlite3.bak").exists()
+    assert repository.latest_transcript_for_video(older.bvid, 1) == newer
+    versions = repository.guide_versions_for_video(older.bvid, 1)
+    assert [item["revision_id"] for item in versions] == [newer.revision_id, older.revision_id]
+    assert versions[0]["provider"] == "provider-a"
+
+
 def test_repository_serializes_concurrent_writers(tmp_path: Path) -> None:
     repository = StudyRepository(tmp_path / "concurrent.sqlite3")
     first = transcript()
@@ -182,3 +238,68 @@ def test_repository_serializes_concurrent_writers(tmp_path: Path) -> None:
         tuple(pool.map(repository.save_transcript, (first, second)))
     assert repository.get_transcript(first.revision_id) == first
     assert repository.get_transcript(second.revision_id) == second
+
+
+def test_cache_inventory_prune_and_clear_preserve_sources_and_personal_content(
+    tmp_path: Path,
+) -> None:
+    repository = StudyRepository(tmp_path / "cache.sqlite3")
+    revision = transcript()
+    repository.save_transcript(revision)
+    guide_payload = {
+        "learning_objectives": ["目标"],
+        "chapters": [
+            {
+                "title": "章节",
+                "summary": "总结",
+                "evidence": {
+                    "revision_id": revision.revision_id,
+                    "start_cue_id": "c000001",
+                    "end_cue_id": revision.cues[-1].cue_id,
+                },
+            }
+        ],
+    }
+    guide = guide_from_payload(guide_payload, revision, "kept", "zh-CN")
+    repository.cache_put("kept", "study_guide", guide_payload)
+    repository.cache_put("orphan", "repair", {"temporary": True})
+    repository.save_guide(
+        guide,
+        {
+            **guide_to_payload(guide),
+            "provider": "provider-a",
+            "model": "model-a",
+        },
+    )
+    note = new_note(
+        revision_id=revision.revision_id,
+        timestamp_ms=100,
+        note_type="note",
+        body="不能删除",
+    )
+    repository.save_note(note)
+    repository.save_reflection(
+        "answer-1",
+        revision.revision_id,
+        "q1",
+        {"response": "原始回答", "status": "feedback_failed"},
+    )
+
+    inventory = repository.cache_inventory()
+    assert inventory["request_cache_items"] == 2
+    assert inventory["request_cache_bytes"] > 0
+    assert inventory["rebuildable_generation_items"] == 1
+    assert inventory["rebuildable_generation_bytes"] > 0
+    assert repository.prune_cache()["deleted_items"] == 1
+    candidates = repository.generated_candidates(provider="provider-a")
+    assert [item["guide_id"] for item in candidates] == [guide.guide_id]
+    assert repository.clear_generated((guide.guide_id,)) == (guide.guide_id,)
+    assert repository.latest_transcript_for_video(revision.bvid, revision.page) == revision
+    assert repository.notes(revision.revision_id) == (note,)
+    assert repository.reflections(revision.revision_id)[0]["response"] == "原始回答"
+    assert repository.cache_inventory() == {
+        "request_cache_items": 0,
+        "request_cache_bytes": 0,
+        "rebuildable_generation_items": 0,
+        "rebuildable_generation_bytes": 0,
+    }

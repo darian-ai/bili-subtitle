@@ -6,7 +6,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -62,6 +62,20 @@ REFLECTION_SCHEMA = {
     "misconceptions": ["string"],
     "evidence": [EVIDENCE_SCHEMA],
 }
+EVIDENCED_TEXT_SCHEMA = {"text": "string", "evidence": EVIDENCE_SCHEMA}
+SUMMARY_SCHEMA = {
+    "learning_goals": [EVIDENCED_TEXT_SCHEMA],
+    "chapter_conclusions": [EVIDENCED_TEXT_SCHEMA],
+    "key_connections": [EVIDENCED_TEXT_SCHEMA],
+    "unknowns": ["string"],
+}
+MINDMAP_NODE_SCHEMA = {
+    "node_id": "n001",
+    "label": "string",
+    "evidence": EVIDENCE_SCHEMA,
+    "children": ["recursive MINDMAP_NODE_SCHEMA"],
+}
+MINDMAP_SCHEMA = {"root": MINDMAP_NODE_SCHEMA}
 
 
 def _ignore_progress(_phase: str, _percent: int) -> None:
@@ -88,6 +102,32 @@ class GenerationResult:
     guide: StudyGuide
     payload: dict[str, Any]
     metrics: GenerationMetrics
+
+
+def generation_usage(metrics: GenerationMetrics, config: ProviderConfig) -> dict[str, Any]:
+    """Return honest usage and a Decimal estimate only when every input is known."""
+    estimated_cost: str | None = None
+    if (
+        metrics.prompt_tokens is not None
+        and metrics.completion_tokens is not None
+        and config.input_price_per_million is not None
+        and config.output_price_per_million is not None
+    ):
+        cost = (
+            Decimal(metrics.prompt_tokens) * config.input_price_per_million
+            + Decimal(metrics.completion_tokens) * config.output_price_per_million
+        ) / Decimal(1_000_000)
+        estimated_cost = str(cost.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
+    return {
+        "requests": metrics.requests,
+        "input_tokens": metrics.prompt_tokens,
+        "output_tokens": metrics.completion_tokens,
+        "total_tokens": metrics.total_tokens,
+        "elapsed_ms": metrics.elapsed_ms,
+        "cache_hit": metrics.cache_hit,
+        "estimated_cost": estimated_cost,
+        "currency": config.currency if estimated_cost is not None else None,
+    }
 
 
 class StudyRepositoryPort(Protocol):
@@ -258,6 +298,9 @@ class GuideGenerator:
             "revision_id": transcript.revision_id,
             "fingerprint": fingerprint,
             "output_language": config.output_language,
+            "created_at": guide.created_at,
+            "provider": config.name,
+            "model": config.model,
         }
         update("persisting", 85)
         self.repository.cache_put(fingerprint, "study_guide", payload)
@@ -381,6 +424,62 @@ class GuideGenerator:
             validator=validate,
         )
         return payload, _metrics(usages, int((time.monotonic() - started) * 1000))
+
+    def generate_summary(
+        self, transcript: TranscriptRevision, guide: StudyGuide
+    ) -> tuple[dict[str, Any], GenerationMetrics]:
+        guide.validate(transcript)
+        started = time.monotonic()
+        payload, usages = self._request_json(
+            json.dumps(
+                {
+                    "task": "evidence_based_study_summary",
+                    "output_schema": SUMMARY_SCHEMA,
+                    "rules": [
+                        "只使用 TRANSCRIPT 和 VERIFIED_GUIDE",
+                        "不得推断或请求笔记、作答、复述、测验尝试等个人内容",
+                        "所有事实项必须引用 TRANSCRIPT 中的连续 cue ID",
+                        "字幕无法判断的事项只写入 unknowns",
+                    ],
+                    "transcript": [
+                        [cue.cue_id, cue.start_ms, cue.end_ms, cue.text] for cue in transcript.cues
+                    ],
+                    "verified_guide": guide_to_payload(guide),
+                },
+                ensure_ascii=False,
+            ),
+            validator=lambda value: validate_study_summary(value, transcript),
+        )
+        return payload, _metrics(usages, int((time.monotonic() - started) * 1000))
+
+    def generate_mindmap(
+        self, transcript: TranscriptRevision, guide: StudyGuide
+    ) -> tuple[dict[str, Any], GenerationMetrics]:
+        guide.validate(transcript)
+        started = time.monotonic()
+        payload, usages = self._request_json(
+            json.dumps(
+                {
+                    "task": "evidence_based_mindmap_tree",
+                    "output_schema": MINDMAP_SCHEMA,
+                    "rules": [
+                        "只返回树结构，不得返回 Mermaid、Markdown、HTML、链接或事件",
+                        "最多 40 个节点、深度最多 4、标签最多 80 个字符",
+                        "每个节点必须引用 TRANSCRIPT 中的连续 cue ID",
+                    ],
+                    "transcript": [
+                        [cue.cue_id, cue.start_ms, cue.end_ms, cue.text] for cue in transcript.cues
+                    ],
+                    "verified_guide": guide_to_payload(guide),
+                },
+                ensure_ascii=False,
+            ),
+            validator=lambda value: validate_mindmap_tree(value, transcript),
+        )
+        tree = validate_mindmap_tree(payload, transcript)
+        return {**payload, "mermaid": render_mindmap_mermaid(tree)}, _metrics(
+            usages, int((time.monotonic() - started) * 1000)
+        )
 
     def _request_json(
         self,
@@ -612,7 +711,7 @@ def guide_from_payload(
         output_language,
         tuple(str(item) for item in cast(list[object], objectives)),
         tuple(chapters),
-        now_iso(),
+        str(payload.get("created_at") or now_iso()),
     )
     guide.validate(transcript)
     return guide
@@ -620,6 +719,101 @@ def guide_from_payload(
 
 def guide_to_payload(guide: StudyGuide) -> dict[str, Any]:
     return asdict(guide)
+
+
+def validate_study_summary(
+    payload: dict[str, Any], transcript: TranscriptRevision
+) -> dict[str, Any]:
+    for field in ("learning_goals", "chapter_conclusions", "key_connections"):
+        raw = payload.get(field)
+        if not isinstance(raw, list):
+            raise ProviderStructureError("学习总结 schema 无效。")
+        values = cast(list[object], raw)
+        if not 1 <= len(values) <= 20:
+            raise ProviderStructureError("学习总结 schema 无效。")
+        for value in values:
+            if not isinstance(value, dict):
+                raise ProviderStructureError("学习总结 schema 无效。")
+            item = cast(dict[str, Any], value)
+            if not isinstance(item.get("text"), str) or not str(item["text"]).strip():
+                raise ProviderStructureError("学习总结 schema 无效。")
+            _evidence(item.get("evidence"), transcript).resolve(transcript)
+    unknowns = payload.get("unknowns")
+    if not isinstance(unknowns, list):
+        raise ProviderStructureError("学习总结 schema 无效。")
+    unknown_values = cast(list[object], unknowns)
+    if len(unknown_values) > 20 or any(
+        not isinstance(item, str) or not item.strip() for item in unknown_values
+    ):
+        raise ProviderStructureError("学习总结 schema 无效。")
+    return payload
+
+
+def validate_mindmap_tree(
+    payload: dict[str, Any], transcript: TranscriptRevision
+) -> dict[str, Any]:
+    root = payload.get("root")
+    if not isinstance(root, dict):
+        raise ProviderStructureError("导图树 schema 无效。")
+    node_ids: set[str] = set()
+    object_ids: set[int] = set()
+    count = 0
+
+    def visit(value: object, depth: int) -> None:
+        nonlocal count
+        if not isinstance(value, dict) or depth > 4:
+            raise ProviderStructureError("导图树深度或循环无效。")
+        node = cast(dict[str, Any], value)
+        object_id = id(cast(object, node))
+        if object_id in object_ids:
+            raise ProviderStructureError("导图树深度或循环无效。")
+        object_ids.add(object_id)
+        node_id = node.get("node_id")
+        label = node.get("label")
+        children = node.get("children")
+        if (
+            not isinstance(node_id, str)
+            or not node_id
+            or node_id in node_ids
+            or not isinstance(label, str)
+            or not label.strip()
+            or len(label) > 80
+            or not isinstance(children, list)
+        ):
+            raise ProviderStructureError("导图树节点无效。")
+        node_ids.add(node_id)
+        count += 1
+        if count > 40:
+            raise ProviderStructureError("导图树节点过多。")
+        _evidence(node.get("evidence"), transcript).resolve(transcript)
+        for child in cast(list[object], children):
+            visit(child, depth + 1)
+
+    visit(cast(object, root), 1)
+    return payload
+
+
+def render_mindmap_mermaid(tree: dict[str, Any]) -> str:
+    """Render validated data locally; model identifiers and syntax are never emitted."""
+    root = cast(dict[str, Any], tree["root"])
+    lines = ["mindmap"]
+
+    def safe_label(raw: object) -> str:
+        untrusted = str(raw).replace("https://", "").replace("http://", "")
+        label = "".join(
+            character
+            for character in untrusted
+            if character.isalnum() or character.isspace() or character in "，。！？、：；（）()-_"
+        )
+        return " ".join(label.split())[:80] or "未命名"
+
+    def render(node: dict[str, Any], depth: int, index: int) -> None:
+        lines.append(f"{'  ' * depth}n{index}[{safe_label(node['label'])}]")
+        for child_index, child in enumerate(cast(list[dict[str, Any]], node["children"]), 1):
+            render(child, depth + 1, index * 100 + child_index)
+
+    render(root, 1, 1)
+    return "\n".join(lines) + "\n"
 
 
 def render_guide_markdown(guide: StudyGuide, transcript: TranscriptRevision) -> str:

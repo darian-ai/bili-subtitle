@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request, status
@@ -26,12 +28,14 @@ from bili_study.domain import (
     TranscriptSourceMismatch,
     build_transcript,
     new_note,
+    now_iso,
 )
 from bili_study.jobs import PersistentJobWorker, ProgressCallback
 from bili_study.provider import OpenAIChatAdapter, ProviderConfigStore, ProviderSecretStore
 from bili_study.security import PairingStore, SecurityError, TokenRegistry, valid_extension_origin
 from bili_study.services import (
     GuideGenerator,
+    generation_usage,
     guide_from_payload,
     practice_questions,
     render_guide_markdown,
@@ -129,6 +133,15 @@ class ReflectionRequest(StrictModel):
     response: str = Field(min_length=1, max_length=100_000)
 
 
+class QuizAttemptRequest(ReflectionRequest):
+    pass
+
+
+class GeneratedStudyRequest(StrictModel):
+    library: str = Field(min_length=1, max_length=100)
+    provider: str = Field(min_length=1, max_length=100)
+
+
 class JobAccepted(StrictModel):
     job_id: str
     status: Literal["queued"] = "queued"
@@ -185,12 +198,24 @@ class TranscriptResponse(StrictModel):
     cues: list[TranscriptCueResponse]
 
 
+class StoredGuideSummary(StrictModel):
+    guide_id: str
+    revision_id: str
+    created_at: str
+    provider: str | None
+    model: str | None
+    track_id: int | str | None
+
+
 class VideoWorkspaceLookup(StrictModel):
     schema_version: Literal[1] = 1
     bvid: str
     page: int
     guide_id: str | None
     revision_id: str | None
+    guide_versions: list[StoredGuideSummary] = Field(
+        default_factory=lambda: list[StoredGuideSummary]()
+    )
 
 
 class PersonalNoteResponse(StrictModel):
@@ -210,6 +235,44 @@ class ReflectionAttemptResponse(StrictModel):
     response: str
     status: Literal["pending", "succeeded", "feedback_failed"]
     feedback: dict[str, Any] | None = None
+    submitted_at: str | None = None
+
+
+class QuizAttemptResponse(StrictModel):
+    attempt_id: str
+    guide_id: str
+    revision_id: str
+    question_id: str
+    response: str
+    submitted_at: str
+    status: Literal["pending", "succeeded", "feedback_failed"]
+    feedback: dict[str, Any] | None = None
+
+
+class StudySummaryResponse(StrictModel):
+    summary_id: str
+    guide_id: str
+    revision_id: str
+    created_at: str
+    provider: str
+    model: str
+    learning_goals: list[dict[str, Any]]
+    chapter_conclusions: list[dict[str, Any]]
+    key_connections: list[dict[str, Any]]
+    unknowns: list[str]
+    usage: dict[str, Any]
+
+
+class MindMapResponse(StrictModel):
+    mindmap_id: str
+    guide_id: str
+    revision_id: str
+    created_at: str
+    provider: str
+    model: str
+    root: dict[str, Any]
+    mermaid: str
+    usage: dict[str, Any]
 
 
 class StudyWorkspaceResponse(StrictModel):
@@ -217,6 +280,48 @@ class StudyWorkspaceResponse(StrictModel):
     guide: dict[str, Any]
     notes: list[PersonalNoteResponse]
     reflections: list[ReflectionAttemptResponse]
+    quiz_attempts: list[QuizAttemptResponse] = Field(
+        default_factory=lambda: list[QuizAttemptResponse]()
+    )
+    summaries: list[StudySummaryResponse] = Field(
+        default_factory=lambda: list[StudySummaryResponse]()
+    )
+    mindmaps: list[MindMapResponse] = Field(default_factory=lambda: list[MindMapResponse]())
+
+
+class CacheInventoryResponse(StrictModel):
+    schema_version: Literal[1] = 1
+    request_cache_items: int
+    request_cache_bytes: int
+    rebuildable_generation_items: int
+    rebuildable_generation_bytes: int
+
+
+class CacheClearRequest(StrictModel):
+    library: str = Field(min_length=1, max_length=100)
+    bvid: str | None = Field(default=None, pattern=r"^BV[A-Za-z0-9]{10}$")
+    page: int | None = Field(default=None, ge=1, le=10_000)
+    provider: str | None = Field(default=None, min_length=1, max_length=100)
+    confirmation: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class CacheClearResponse(StrictModel):
+    schema_version: Literal[1] = 1
+    confirmation: str
+    items: int
+    reclaimable_bytes: int
+    guide_ids: list[str]
+    cleared: bool
+
+
+class CacheCandidate(TypedDict):
+    guide_id: str
+    artifact_ids: tuple[str, ...]
+    bytes: int
+
+
+class LibraryRequest(StrictModel):
+    library: str = Field(min_length=1, max_length=100)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -224,6 +329,19 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
         status_code=status_code,
         content={"error": {"code": code, "message": message}},
     )
+
+
+def _cache_confirmation(scope: CacheClearRequest, candidates: tuple[CacheCandidate, ...]) -> str:
+    payload = {
+        "library": scope.library,
+        "bvid": scope.bvid,
+        "page": scope.page,
+        "provider": scope.provider,
+        "candidates": candidates,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _library(paths: AppPaths, name: str) -> tuple[Library, StudyRepository]:
@@ -508,6 +626,26 @@ def _study_workspace(repository: StudyRepository, guide_id: str) -> StudyWorkspa
                 response=str(attempt.get("response", "")),
                 status=cast(Literal["pending", "succeeded", "feedback_failed"], status_value),
                 feedback=cast(dict[str, Any] | None, attempt.get("feedback")),
+                submitted_at=(
+                    str(attempt["submitted_at"]) if attempt.get("submitted_at") else None
+                ),
+            )
+        )
+    quiz_attempts: list[QuizAttemptResponse] = []
+    for attempt in repository.quiz_attempts(guide_id):
+        status_value = str(attempt.get("status", "feedback_failed"))
+        if status_value not in {"pending", "succeeded", "feedback_failed"}:
+            status_value = "feedback_failed"
+        quiz_attempts.append(
+            QuizAttemptResponse(
+                attempt_id=str(attempt["attempt_id"]),
+                guide_id=guide_id,
+                revision_id=revision_id,
+                question_id=str(attempt["question_id"]),
+                response=str(attempt.get("response", "")),
+                submitted_at=str(attempt.get("submitted_at", "")),
+                status=cast(Literal["pending", "succeeded", "feedback_failed"], status_value),
+                feedback=cast(dict[str, Any] | None, attempt.get("feedback")),
             )
         )
     return StudyWorkspaceResponse(
@@ -517,6 +655,11 @@ def _study_workspace(repository: StudyRepository, guide_id: str) -> StudyWorkspa
             for note in repository.notes(revision_id)
         ],
         reflections=reflections,
+        quiz_attempts=quiz_attempts,
+        summaries=[
+            StudySummaryResponse.model_validate(value) for value in repository.summaries(guide_id)
+        ],
+        mindmaps=[MindMapResponse.model_validate(value) for value in repository.mindmaps(guide_id)],
     )
 
 
@@ -541,6 +684,16 @@ def _guide_job(
                 "page": transcript.page,
                 "cache_hit": True,
                 "reused_existing": True,
+                "usage": {
+                    "requests": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "elapsed_ms": 0,
+                    "cache_hit": True,
+                    "estimated_cost": "0.000000",
+                    "currency": None,
+                },
             }
     progress("preparing_outline", 20)
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
@@ -562,6 +715,7 @@ def _guide_job(
         "bvid": transcript.bvid,
         "page": transcript.page,
         "cache_hit": result.metrics.cache_hit,
+        "usage": generation_usage(result.metrics, config),
     }
 
 
@@ -592,11 +746,21 @@ def _detail_job(
             "page": transcript.page,
             "detail": existing,
             "reused_existing": True,
+            "usage": {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "elapsed_ms": 0,
+                "cache_hit": True,
+                "estimated_cost": "0.000000",
+                "currency": None,
+            },
         }
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     progress("generating_detail", 35)
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
-        detail, _ = GuideGenerator(chat, repository).generate_chapter_detail(
+        detail, metrics = GuideGenerator(chat, repository).generate_chapter_detail(
             transcript, chapter, progress=progress
         )
     progress("validating_evidence", 80)
@@ -610,6 +774,7 @@ def _detail_job(
         "revision_id": transcript.revision_id,
         "bvid": transcript.bvid,
         "page": transcript.page,
+        "usage": generation_usage(metrics, config),
     }
 
 
@@ -639,11 +804,21 @@ def _practice_job(
             "bvid": transcript.bvid,
             "page": transcript.page,
             "reused_existing": True,
+            "usage": {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "elapsed_ms": 0,
+                "cache_hit": True,
+                "estimated_cost": "0.000000",
+                "currency": None,
+            },
         }
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     progress("generating_practice", 35)
     with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
-        practice, _ = GuideGenerator(chat, repository).generate_chapter_practice(
+        practice, metrics = GuideGenerator(chat, repository).generate_chapter_practice(
             transcript, chapter, progress=progress
         )
     progress("validating_evidence", 80)
@@ -656,6 +831,7 @@ def _practice_job(
         "revision_id": transcript.revision_id,
         "bvid": transcript.bvid,
         "page": transcript.page,
+        "usage": generation_usage(metrics, config),
     }
 
 
@@ -698,8 +874,19 @@ def _reflection_job(
                 "page": transcript.page,
                 "feedback": existing.get("feedback"),
                 "reused_existing": True,
+                "usage": {
+                    "requests": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "elapsed_ms": 0,
+                    "cache_hit": True,
+                    "estimated_cost": "0.000000",
+                    "currency": None,
+                },
             }
     reflection_id = str(uuid4())
+    submitted_at = now_iso()
     publish_reflection(
         library,
         reflection_id=reflection_id,
@@ -709,18 +896,29 @@ def _reflection_job(
     )
     attempt = {
         "reflection_id": reflection_id,
+        "attempt_id": reflection_id,
         "guide_id": guide.guide_id,
         "question_id": question.question_id,
         "response": response,
         "status": "pending",
         "feedback": None,
+        "revision_id": transcript.revision_id,
+        "submitted_at": submitted_at,
     }
     repository.save_reflection(reflection_id, transcript.revision_id, question.question_id, attempt)
+    repository.save_quiz_attempt(
+        reflection_id,
+        guide.guide_id,
+        transcript.revision_id,
+        question.question_id,
+        submitted_at,
+        attempt,
+    )
     config = ProviderConfigStore(paths).get(str(raw["provider"]))
     progress("generating_feedback", 40)
     try:
         with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
-            feedback, _ = GuideGenerator(chat, repository).generate_reflection(
+            feedback, metrics = GuideGenerator(chat, repository).generate_reflection(
                 transcript, question, response
             )
     except Exception:
@@ -728,6 +926,14 @@ def _reflection_job(
             reflection_id,
             transcript.revision_id,
             question.question_id,
+            {**attempt, "status": "feedback_failed"},
+        )
+        repository.save_quiz_attempt(
+            reflection_id,
+            guide.guide_id,
+            transcript.revision_id,
+            question.question_id,
+            submitted_at,
             {**attempt, "status": "feedback_failed"},
         )
         raise
@@ -741,6 +947,7 @@ def _reflection_job(
         "revision_id": transcript.revision_id,
         "bvid": transcript.bvid,
         "page": transcript.page,
+        "usage": generation_usage(metrics, config),
     }
     repository.save_reflection(
         reflection_id,
@@ -748,6 +955,107 @@ def _reflection_job(
         question.question_id,
         {**result, "response": response, "status": "succeeded"},
     )
+    repository.save_quiz_attempt(
+        reflection_id,
+        guide.guide_id,
+        transcript.revision_id,
+        question.question_id,
+        submitted_at,
+        {
+            **result,
+            "attempt_id": reflection_id,
+            "response": response,
+            "status": "succeeded",
+            "submitted_at": submitted_at,
+        },
+    )
+    progress("publishing", 90)
+    return result
+
+
+def _summary_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
+    library, repository = _library(paths, str(raw["library"]))
+    guide_id = str(raw["guide_id"])
+    guide_payload = repository.guide_payload(guide_id)
+    transcript = repository.get_transcript(str(guide_payload["revision_id"]))
+    guide = guide_from_payload(
+        guide_payload,
+        transcript,
+        str(guide_payload["fingerprint"]),
+        str(guide_payload["output_language"]),
+    )
+    config = ProviderConfigStore(paths).get(str(raw["provider"]))
+    progress("generating_summary", 35)
+    with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
+        payload, metrics = GuideGenerator(chat, repository).generate_summary(transcript, guide)
+    progress("validating_evidence", 80)
+    summary_id = str(uuid4())
+    created_at = now_iso()
+    result = {
+        **payload,
+        "summary_id": summary_id,
+        "guide_id": guide_id,
+        "revision_id": transcript.revision_id,
+        "created_at": created_at,
+        "provider": config.name,
+        "model": config.model,
+        "usage": generation_usage(metrics, config),
+    }
+    repository.save_summary(summary_id, guide_id, created_at, result)
+    lines = ["# 学习总结", ""]
+    for title, field in (
+        ("学习目标", "learning_goals"),
+        ("章节结论", "chapter_conclusions"),
+        ("关键联系", "key_connections"),
+    ):
+        lines.extend([f"## {title}", ""])
+        lines.extend(f"- {item['text']}" for item in cast(list[dict[str, Any]], payload[field]))
+        lines.append("")
+    lines.extend(["## 字幕无法判断", ""])
+    lines.extend(f"- {item}" for item in cast(list[str], payload["unknowns"]))
+    publish_generated(library, summary_id, "\n".join(lines) + "\n")
+    progress("publishing", 90)
+    return result
+
+
+def _mindmap_job(
+    paths: AppPaths,
+    raw: dict[str, Any],
+    progress: ProgressCallback = _no_progress,
+) -> dict[str, Any]:
+    library, repository = _library(paths, str(raw["library"]))
+    guide_id = str(raw["guide_id"])
+    guide_payload = repository.guide_payload(guide_id)
+    transcript = repository.get_transcript(str(guide_payload["revision_id"]))
+    guide = guide_from_payload(
+        guide_payload,
+        transcript,
+        str(guide_payload["fingerprint"]),
+        str(guide_payload["output_language"]),
+    )
+    config = ProviderConfigStore(paths).get(str(raw["provider"]))
+    progress("generating_mindmap", 35)
+    with OpenAIChatAdapter(config, ProviderSecretStore().get(config.name)) as chat:
+        payload, metrics = GuideGenerator(chat, repository).generate_mindmap(transcript, guide)
+    progress("validating_evidence", 80)
+    mindmap_id = str(uuid4())
+    created_at = now_iso()
+    result = {
+        **payload,
+        "mindmap_id": mindmap_id,
+        "guide_id": guide_id,
+        "revision_id": transcript.revision_id,
+        "created_at": created_at,
+        "provider": config.name,
+        "model": config.model,
+        "usage": generation_usage(metrics, config),
+    }
+    repository.save_mindmap(mindmap_id, guide_id, created_at, result)
+    publish_generated(library, mindmap_id, f"```mermaid\n{payload['mermaid']}```\n")
     progress("publishing", 90)
     return result
 
@@ -783,6 +1091,13 @@ def create_app(
     app_worker.register(
         "reflection", lambda raw, progress: _reflection_job(app_paths, raw, progress)
     )
+    app_worker.register(
+        "quiz_attempt", lambda raw, progress: _reflection_job(app_paths, raw, progress)
+    )
+    app_worker.register(
+        "study_summary", lambda raw, progress: _summary_job(app_paths, raw, progress)
+    )
+    app_worker.register("mindmap", lambda raw, progress: _mindmap_job(app_paths, raw, progress))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -1049,11 +1364,13 @@ def create_app(
         _library_value, repository = _library(app_paths, library)
         payload = repository.latest_guide_for_video(bvid, page)
         transcript = repository.latest_transcript_for_video(bvid, page)
+        versions = repository.guide_versions_for_video(bvid, page)
         return VideoWorkspaceLookup(
             bvid=bvid,
             page=page,
             guide_id=str(payload["guide_id"]) if payload is not None else None,
             revision_id=transcript.revision_id if transcript is not None else None,
+            guide_versions=[StoredGuideSummary.model_validate(item) for item in versions],
         )
 
     @app.post(
@@ -1108,5 +1425,123 @@ def create_app(
     )
     def _create_reflection(body: ReflectionRequest, _: Auth) -> JobAccepted:
         return JobAccepted(job_id=app_worker.submit("reflection", body.model_dump()))
+
+    @app.post(
+        "/api/v1/quiz-attempts",
+        response_model=JobAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+        operation_id="createQuizAttempt",
+    )
+    def _create_quiz_attempt(body: QuizAttemptRequest, _: Auth) -> JobAccepted:
+        return JobAccepted(job_id=app_worker.submit("quiz_attempt", body.model_dump()))
+
+    @app.get(
+        "/api/v1/study-guides/{guide_id}/quiz-attempts",
+        response_model=list[QuizAttemptResponse],
+        operation_id="listQuizAttempts",
+    )
+    def _list_quiz_attempts(
+        guide_id: str, library: str, authenticated_origin: Auth
+    ) -> list[QuizAttemptResponse]:
+        del authenticated_origin
+        _library_value, repository = _library(app_paths, library)
+        return _study_workspace(repository, guide_id).quiz_attempts
+
+    @app.post(
+        "/api/v1/study-guides/{guide_id}/summary",
+        response_model=JobAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+        operation_id="createStudySummary",
+    )
+    def _create_summary(guide_id: str, body: GeneratedStudyRequest, _: Auth) -> JobAccepted:
+        request = {**body.model_dump(), "guide_id": guide_id}
+        return JobAccepted(job_id=app_worker.submit("study_summary", request))
+
+    @app.post(
+        "/api/v1/study-guides/{guide_id}/mindmap",
+        response_model=JobAccepted,
+        status_code=status.HTTP_202_ACCEPTED,
+        operation_id="createMindMap",
+    )
+    def _create_mindmap(guide_id: str, body: GeneratedStudyRequest, _: Auth) -> JobAccepted:
+        request = {**body.model_dump(), "guide_id": guide_id}
+        return JobAccepted(job_id=app_worker.submit("mindmap", request))
+
+    @app.get(
+        "/api/v1/cache", response_model=CacheInventoryResponse, operation_id="getCacheInventory"
+    )
+    def _cache_inventory(library: str, _: Auth) -> CacheInventoryResponse:
+        library_value, repository = _library(app_paths, library)
+        inventory = repository.cache_inventory()
+        generated = library_value.path / "generated" / "videos"
+        if generated.is_dir():
+            inventory["rebuildable_generation_bytes"] += sum(
+                path.stat().st_size for path in generated.glob("*.md") if path.is_file()
+            )
+        return CacheInventoryResponse.model_validate(inventory)
+
+    @app.post("/api/v1/cache/prune", operation_id="pruneCache")
+    def _prune_cache(body: LibraryRequest, _: Auth) -> dict[str, int]:
+        _library_value, repository = _library(app_paths, body.library)
+        return repository.prune_cache()
+
+    @app.post(
+        "/api/v1/cache/clear",
+        response_model=CacheClearResponse,
+        operation_id="clearCache",
+    )
+    def _clear_cache(body: CacheClearRequest, _: Auth) -> CacheClearResponse | JSONResponse:
+        library_value, repository = _library(app_paths, body.library)
+        try:
+            candidates = repository.generated_candidates(
+                bvid=body.bvid, page=body.page, provider=body.provider
+            )
+        except StorageError as exc:
+            return _error(422, "cache_scope_invalid", str(exc))
+        guide_ids = tuple(str(item["guide_id"]) for item in candidates)
+        artifact_ids = tuple(
+            str(artifact_id)
+            for item in candidates
+            for artifact_id in cast(tuple[object, ...], item.get("artifact_ids", ()))
+        )
+        generated = library_value.path / "generated" / "videos"
+        exact_candidates = tuple(
+            CacheCandidate(
+                guide_id=str(item["guide_id"]),
+                artifact_ids=tuple(str(value) for value in item["artifact_ids"]),
+                bytes=int(item["bytes"])
+                + sum(
+                    (generated / f"{artifact_id}.md").stat().st_size
+                    for artifact_id in item["artifact_ids"]
+                    if (generated / f"{artifact_id}.md").is_file()
+                ),
+            )
+            for item in candidates
+        )
+        confirmation = _cache_confirmation(body, exact_candidates)
+        reclaimable = sum(int(item["bytes"]) for item in exact_candidates)
+        item_count = sum(len(item["artifact_ids"]) for item in exact_candidates)
+        if body.confirmation is None:
+            return CacheClearResponse(
+                confirmation=confirmation,
+                items=item_count,
+                reclaimable_bytes=reclaimable,
+                guide_ids=list(guide_ids),
+                cleared=False,
+            )
+        if body.confirmation != confirmation:
+            return _error(409, "cache_scope_changed", "缓存清理范围已变化，请重新预览。")
+        cleared = repository.clear_generated(guide_ids)
+        for artifact_id in artifact_ids:
+            (library_value.path / "generated" / "videos" / f"{artifact_id}.md").unlink(
+                missing_ok=True
+            )
+        return CacheClearResponse(
+            confirmation=confirmation,
+            items=item_count,
+            reclaimable_bytes=reclaimable,
+            guide_ids=list(cleared),
+            cleared=True,
+        )
 
     return app

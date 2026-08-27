@@ -44,6 +44,7 @@ from bili_study.storage import (
     StorageError,
     StudyRepository,
     library_database,
+    publish_generated,
 )
 from bili_subtitle.domain.errors import (
     AccessDeniedError,
@@ -207,6 +208,97 @@ def test_api_pair_auth_cors_schema_and_personal_note(
         )
 
 
+def test_cache_api_requires_preview_and_preserves_personal_content(
+    paths: AppPaths, allow_testclient_socketpair: None
+) -> None:
+    del allow_testclient_socketpair
+    client, headers = paired_client(paths)
+    library = LibraryRegistry(paths).get("main")
+    repository = StudyRepository(library_database(paths, library))
+    revision = repository.latest_transcript()
+    evidence = EvidenceRef(revision.revision_id, "c000001", "c000001")
+    guide = StudyGuide(
+        "guide-cache",
+        1,
+        revision.revision_id,
+        "cache-fingerprint",
+        "zh-CN",
+        ("目标",),
+        (Chapter("ch001", "章节", "总结", evidence),),
+        now_iso(),
+    )
+    repository.cache_put("cache-fingerprint", "study_guide", {"created_at": guide.created_at})
+    repository.save_guide(
+        guide,
+        {**guide_to_payload(guide), "provider": "provider-a", "model": "model-a"},
+    )
+    note = new_note(
+        revision_id=revision.revision_id,
+        timestamp_ms=10,
+        note_type="note",
+        body="保留笔记",
+    )
+    repository.save_note(note)
+    repository.save_reflection(
+        "attempt-cache",
+        revision.revision_id,
+        "q1",
+        {"response": "保留回答", "status": "feedback_failed"},
+    )
+    published = publish_generated(library, guide.guide_id, "# generated\n")
+
+    with client:
+        inventory = client.get("/api/v1/cache?library=main", headers=headers)
+        assert inventory.json()["rebuildable_generation_items"] == 1
+        preview = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={"library": "main", "provider": "provider-a"},
+        )
+        assert preview.status_code == 200 and not preview.json()["cleared"]
+        assert repository.guide_payload(guide.guide_id)["guide_id"] == guide.guide_id
+        published.write_text("# generated changed after preview\n", encoding="utf-8")
+        changed = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={
+                "library": "main",
+                "provider": "provider-a",
+                "confirmation": preview.json()["confirmation"],
+            },
+        )
+        assert changed.status_code == 409
+        preview = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={"library": "main", "provider": "provider-a"},
+        )
+        rejected = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={
+                "library": "main",
+                "provider": "provider-a",
+                "confirmation": "0" * 64,
+            },
+        )
+        assert rejected.status_code == 409
+        cleared = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={
+                "library": "main",
+                "provider": "provider-a",
+                "confirmation": preview.json()["confirmation"],
+            },
+        )
+        assert cleared.json()["cleared"] and cleared.json()["items"] == 1
+    assert not published.exists()
+    assert repository.get_transcript(revision.revision_id) == revision
+    assert repository.notes(revision.revision_id) == (note,)
+    assert repository.reflections(revision.revision_id)[0]["response"] == "保留回答"
+
+
 def test_api_rejects_host_origin_pair_reuse_and_large_request(
     paths: AppPaths, allow_testclient_socketpair: None
 ) -> None:
@@ -255,6 +347,11 @@ def test_openapi_is_versioned_and_declares_bearer_security(paths: AppPaths) -> N
     assert "/api/v1/videos/{bvid}/pages/{page}/transcripts" in schema["paths"]
     assert "/api/v1/transcripts/{revision_id}" in schema["paths"]
     assert "/api/v1/jobs/{job_id}/cancel" in schema["paths"]
+    assert "/api/v1/quiz-attempts" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/quiz-attempts" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/summary" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/mindmap" in schema["paths"]
+    assert "/api/v1/cache/clear" in schema["paths"]
     source_fields = schema["components"]["schemas"]["SourceRequest"]["properties"]
     assert "cid" not in source_fields and "title" not in source_fields
     assert {"revision_id", "expected_bvid", "expected_page"} <= source_fields.keys()
@@ -606,6 +703,16 @@ def test_async_api_routes_and_guide_read_model(
         )
         assert workspace.json()["guide_id"] == guide.guide_id
         assert workspace.json()["revision_id"] == transcript.revision_id
+        assert workspace.json()["guide_versions"] == [
+            {
+                "guide_id": guide.guide_id,
+                "revision_id": transcript.revision_id,
+                "created_at": guide.created_at,
+                "provider": None,
+                "model": None,
+                "track_id": transcript.track_id,
+            }
+        ]
         full_workspace = client.get(
             f"/api/v1/study-guides/{guide.guide_id}/workspace?library=main",
             headers=headers,
@@ -955,10 +1062,105 @@ def test_guide_job_reuses_stage_eight_generation(
         "bvid": transcript.bvid,
         "page": 1,
         "cache_hit": False,
+        "usage": {
+            "requests": 1,
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "elapsed_ms": 10,
+            "cache_hit": False,
+            "estimated_cost": None,
+            "currency": None,
+        },
     }
     repository = StudyRepository(library_database(paths, library))
     assert repository.get_transcript(transcript.revision_id) == transcript
     assert (library.path / "generated" / "videos" / "guide-job.md").exists()
+
+
+def test_summary_and_mindmap_jobs_persist_versioned_artifacts(
+    paths: AppPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = LibraryRegistry(paths).create("main", paths.config_dir / "vault-artifacts")
+    repository = StudyRepository(library_database(paths, library))
+    transcript = build_transcript(
+        bvid="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="课程",
+        track_id=1,
+        language="zh-CN",
+        display_name="中文",
+        kind="human",
+        cue_values=((0, 1000, "内容"),),
+    )
+    repository.save_transcript(transcript)
+    evidence = EvidenceRef(transcript.revision_id, "c000001", "c000001")
+    guide = StudyGuide(
+        "guide-artifacts",
+        1,
+        transcript.revision_id,
+        "fingerprint-artifacts",
+        "zh-CN",
+        ("目标",),
+        (Chapter("ch001", "章节", "总结", evidence),),
+        now_iso(),
+    )
+    repository.save_guide(guide, guide_to_payload(guide))
+    config = ProviderConfig(
+        "test",
+        "https://model.example/v1",
+        "model",
+        input_price_per_million=Decimal("1"),
+        output_price_per_million=Decimal("2"),
+        currency="USD",
+    )
+    monkeypatch.setattr(api_module.ProviderConfigStore, "get", lambda _self, _name: config)
+    monkeypatch.setattr(api_module.ProviderSecretStore, "get", lambda _self, _name: "secret")
+
+    class ChatContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+    class Generator:
+        def __init__(self, chat: object, saved: object) -> None:
+            del chat, saved
+
+        def generate_summary(
+            self, value: object, saved_guide: object
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            assert value == transcript and saved_guide == guide
+            return {
+                "learning_goals": [{"text": "目标", "evidence": {}}],
+                "chapter_conclusions": [{"text": "结论", "evidence": {}}],
+                "key_connections": [{"text": "联系", "evidence": {}}],
+                "unknowns": ["未知"],
+            }, GenerationMetrics(1, 100, 50, 150, 10, False)
+
+        def generate_mindmap(
+            self, value: object, saved_guide: object
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            assert value == transcript and saved_guide == guide
+            return {
+                "root": {"node_id": "n1", "label": "课程", "evidence": {}, "children": []},
+                "mermaid": "mindmap\n  n1[课程]\n",
+            }, GenerationMetrics(1, 100, 50, 150, 10, False)
+
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda *_args: ChatContext())
+    monkeypatch.setattr(api_module, "GuideGenerator", Generator)
+    request = {"library": "main", "provider": "test", "guide_id": guide.guide_id}
+    summary = api_module._summary_job(paths, request)
+    mindmap = api_module._mindmap_job(paths, request)
+    assert summary["revision_id"] == transcript.revision_id
+    assert summary["usage"]["estimated_cost"] == "0.000200"
+    assert mindmap["mermaid"].startswith("mindmap")
+    assert repository.summaries(guide.guide_id)[0]["summary_id"] == summary["summary_id"]
+    assert repository.mindmaps(guide.guide_id)[0]["mindmap_id"] == mindmap["mindmap_id"]
+    assert (library.path / "generated" / "videos" / f"{summary['summary_id']}.md").exists()
+    assert (library.path / "generated" / "videos" / f"{mindmap['mindmap_id']}.md").exists()
 
 
 def test_existing_guide_short_circuits_before_platform_and_provider(
