@@ -20,6 +20,18 @@ class SubtitleTrackUnavailable(DomainError):
     """The subtitle track selected during inspection is no longer available."""
 
 
+class SubtitleTrackAmbiguous(DomainError):
+    """More than one current track matches the inspected stable descriptors."""
+
+
+class TranscriptSourceMismatch(DomainError):
+    """A saved revision does not belong to the caller's expected canonical BV/P."""
+
+
+class InspectionSourceMismatch(DomainError):
+    """A fresh canonical resolution no longer matches the bound inspection."""
+
+
 @dataclass(frozen=True, slots=True)
 class TranscriptCue:
     cue_id: str
@@ -49,6 +61,9 @@ class TranscriptRevision:
     content_sha256: str
     created_at: str
     cues: tuple[TranscriptCue, ...]
+    source_verification: str = "verified"
+    page_identity_source: str = "server_resolved_bvid_page"
+    inspection_job_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION or not self.revision_id:
@@ -57,6 +72,8 @@ class TranscriptRevision:
             raise DomainError("Transcript 来源无效。")
         if not self.cues:
             raise DomainError("Transcript 不能为空。")
+        if self.source_verification not in {"verified", "legacy_unverified"}:
+            raise DomainError("Transcript 来源验证状态无效。")
         for index, cue in enumerate(self.cues):
             if cue.cue_id != f"c{index + 1:06d}":
                 raise DomainError("字幕 cue 标识必须稳定且连续。")
@@ -194,6 +211,9 @@ def build_transcript(
     kind: str,
     cue_values: tuple[tuple[int, int, str], ...],
     created_at: str | None = None,
+    source_verification: str = "verified",
+    page_identity_source: str = "server_resolved_bvid_page",
+    inspection_job_id: str | None = None,
 ) -> TranscriptRevision:
     cues = tuple(
         TranscriptCue(f"c{index + 1:06d}", start, end, text)
@@ -215,6 +235,9 @@ def build_transcript(
         digest,
         created_at or now_iso(),
         cues,
+        source_verification,
+        page_identity_source,
+        inspection_job_id,
     )
 
 
@@ -253,13 +276,14 @@ def to_json(value: TranscriptRevision | StudyGuide | PersonalNote) -> str:
 
 
 def transcript_from_dict(raw: dict[str, Any]) -> TranscriptRevision:
+    page = int(raw["page"])
     return TranscriptRevision(
         revision_id=str(raw["revision_id"]),
         schema_version=int(raw["schema_version"]),
         bvid=str(raw["bvid"]),
-        page=int(raw["page"]),
+        page=page,
         cid=int(raw["cid"]),
-        title=str(raw["title"]),
+        title=str(raw.get("title") or f"P{page}（历史记录）"),
         track_id=int(raw["track_id"]) if raw.get("track_id") is not None else None,
         language=str(raw["language"]),
         display_name=str(raw["display_name"]),
@@ -267,4 +291,9 @@ def transcript_from_dict(raw: dict[str, Any]) -> TranscriptRevision:
         content_sha256=str(raw["content_sha256"]),
         created_at=str(raw["created_at"]),
         cues=tuple(TranscriptCue(**cue) for cue in raw["cues"]),
+        source_verification=str(raw.get("source_verification") or "legacy_unverified"),
+        page_identity_source=str(raw.get("page_identity_source") or "legacy_record"),
+        inspection_job_id=(
+            str(raw["inspection_job_id"]) if raw.get("inspection_job_id") is not None else None
+        ),
     )

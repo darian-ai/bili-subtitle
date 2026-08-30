@@ -1,14 +1,52 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from bili_study.domain import DomainError, build_transcript
 from bili_study.provider import ChatResult, ChatUsage, ProviderConfig, ProviderStructureError
-from bili_study.services import GuideGenerator, practice_questions, render_guide_markdown
+from bili_study.services import (
+    GenerationMetrics,
+    GuideGenerator,
+    generation_usage,
+    practice_questions,
+    render_guide_markdown,
+    render_mindmap_mermaid,
+    validate_mindmap_tree,
+    validate_study_summary,
+)
 from bili_study.storage import StudyRepository
+
+
+def test_generation_usage_estimates_decimal_cost_only_when_complete() -> None:
+    priced = ProviderConfig(
+        "p",
+        "https://model.example/v1",
+        "m",
+        input_price_per_million=Decimal("0.5"),
+        output_price_per_million=Decimal("2"),
+        currency="USD",
+    )
+    usage = generation_usage(GenerationMetrics(2, 1_000_000, 500_000, 1_500_000, 25, False), priced)
+    assert usage["estimated_cost"] == "1.500000" and usage["currency"] == "USD"
+    partial = generation_usage(GenerationMetrics(1, 10, None, None, 5, False), priced)
+    assert partial["estimated_cost"] is None and partial["currency"] is None
+    free = generation_usage(
+        GenerationMetrics(1, 0, 0, 0, 1, False),
+        ProviderConfig(
+            "free",
+            "https://model.example/v1",
+            "m",
+            input_price_per_million=Decimal("0"),
+            output_price_per_million=Decimal("0"),
+            currency="CNY",
+        ),
+    )
+    assert free["estimated_cost"] == "0.000000"
 
 
 def transcript():
@@ -242,3 +280,130 @@ def test_chapter_practice_is_limited_and_evidence_checked(tmp_path: Path) -> Non
     ).generate_chapter_practice(revision, guide.chapters[0])
     assert metrics.requests == 1
     assert practice_questions(generated, revision, guide.chapters[0])[0].question_id == "q-ch001-01"
+
+
+def test_summary_uses_only_transcript_and_verified_guide(tmp_path: Path) -> None:
+    revision = transcript()
+    repository = StudyRepository(tmp_path / "summary.sqlite3")
+    repository.save_transcript(revision)
+    guide = (
+        GuideGenerator(FakeChat([json.dumps(guide_payload())]), repository)
+        .generate(revision, ProviderConfig("p", "https://model.example/v1", "m"))
+        .guide
+    )
+    summary = {
+        "learning_goals": [
+            {
+                "text": "理解一",
+                "evidence": {"start_cue_id": "c000001", "end_cue_id": "c000001"},
+            }
+        ],
+        "chapter_conclusions": [
+            {
+                "text": "结论二",
+                "evidence": {"start_cue_id": "c000002", "end_cue_id": "c000002"},
+            }
+        ],
+        "key_connections": [
+            {
+                "text": "一与三相关",
+                "evidence": {"start_cue_id": "c000001", "end_cue_id": "c000003"},
+            }
+        ],
+        "unknowns": ["字幕没有说明外部背景"],
+    }
+    chat = FakeChat([json.dumps(summary)])
+    generated, metrics = GuideGenerator(chat, repository).generate_summary(revision, guide)
+    assert generated == summary and metrics.requests == 1
+    prompt = json.loads(chat.requests[0][1])
+    assert set(prompt) == {"task", "output_schema", "rules", "transcript", "verified_guide"}
+    assert all(
+        term not in chat.requests[0][1] for term in ("personal_note", "quiz_attempt", "response")
+    )
+
+
+def test_mindmap_is_bounded_and_mermaid_is_locally_sanitized(tmp_path: Path) -> None:
+    revision = transcript()
+    repository = StudyRepository(tmp_path / "mindmap.sqlite3")
+    repository.save_transcript(revision)
+    guide = (
+        GuideGenerator(FakeChat([json.dumps(guide_payload())]), repository)
+        .generate(revision, ProviderConfig("p", "https://model.example/v1", "m"))
+        .guide
+    )
+    evidence = {"start_cue_id": "c000001", "end_cue_id": "c000003"}
+    tree: dict[str, Any] = {
+        "root": {
+            "node_id": "model-controlled",
+            "label": "课程<script>alert(1)</script> click https://evil.example",
+            "evidence": evidence,
+            "children": [],
+        }
+    }
+    payload, metrics = GuideGenerator(FakeChat([json.dumps(tree)]), repository).generate_mindmap(
+        revision, guide
+    )
+    assert metrics.requests == 1
+    assert payload["mermaid"] == render_mindmap_mermaid(tree)
+    assert "<" not in payload["mermaid"] and "https" not in payload["mermaid"]
+    assert "model-controlled" not in payload["mermaid"]
+    cyclic: dict[str, object] = {
+        "node_id": "n1",
+        "label": "根",
+        "evidence": evidence,
+        "children": [],
+    }
+    cyclic["children"] = [cyclic]
+    with pytest.raises(ProviderStructureError, match="循环"):
+        validate_mindmap_tree({"root": cyclic}, revision)
+
+
+def test_summary_and_mindmap_reject_invalid_bounds() -> None:
+    revision = transcript()
+    with pytest.raises(ProviderStructureError, match="总结"):
+        validate_study_summary(
+            {
+                "learning_goals": [],
+                "chapter_conclusions": [],
+                "key_connections": [],
+                "unknowns": [],
+            },
+            revision,
+        )
+    with pytest.raises(ProviderStructureError, match="总结"):
+        validate_study_summary(
+            {
+                "learning_goals": ["not-an-object"],
+                "chapter_conclusions": [],
+                "key_connections": [],
+                "unknowns": [],
+            },
+            revision,
+        )
+    evidence = {"start_cue_id": "c000001", "end_cue_id": "c000001"}
+    duplicate: dict[str, Any] = {
+        "root": {
+            "node_id": "n1",
+            "label": "根",
+            "evidence": evidence,
+            "children": [
+                {"node_id": "n2", "label": "一", "evidence": evidence, "children": []},
+                {"node_id": "n2", "label": "二", "evidence": evidence, "children": []},
+            ],
+        }
+    }
+    with pytest.raises(ProviderStructureError, match="节点"):
+        validate_mindmap_tree(duplicate, revision)
+    too_many: dict[str, Any] = {
+        "root": {
+            "node_id": "root",
+            "label": "根",
+            "evidence": evidence,
+            "children": [
+                {"node_id": f"n{index}", "label": str(index), "evidence": evidence, "children": []}
+                for index in range(40)
+            ],
+        }
+    }
+    with pytest.raises(ProviderStructureError, match="过多"):
+        validate_mindmap_tree(too_many, revision)

@@ -1,6 +1,151 @@
 {
   "components": {
     "schemas": {
+      "CacheClearRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bvid": {
+            "anyOf": [
+              {
+                "pattern": "^BV[A-Za-z0-9]{10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bvid"
+          },
+          "confirmation": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation"
+          },
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "library"
+        ],
+        "title": "CacheClearRequest",
+        "type": "object"
+      },
+      "CacheClearResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cleared": {
+            "title": "Cleared",
+            "type": "boolean"
+          },
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "guide_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Guide Ids",
+            "type": "array"
+          },
+          "items": {
+            "title": "Items",
+            "type": "integer"
+          },
+          "reclaimable_bytes": {
+            "title": "Reclaimable Bytes",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmation",
+          "items",
+          "reclaimable_bytes",
+          "guide_ids",
+          "cleared"
+        ],
+        "title": "CacheClearResponse",
+        "type": "object"
+      },
+      "CacheInventoryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "rebuildable_generation_bytes": {
+            "title": "Rebuildable Generation Bytes",
+            "type": "integer"
+          },
+          "rebuildable_generation_items": {
+            "title": "Rebuildable Generation Items",
+            "type": "integer"
+          },
+          "request_cache_bytes": {
+            "title": "Request Cache Bytes",
+            "type": "integer"
+          },
+          "request_cache_items": {
+            "title": "Request Cache Items",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_cache_items",
+          "request_cache_bytes",
+          "rebuildable_generation_items",
+          "rebuildable_generation_bytes"
+        ],
+        "title": "CacheInventoryResponse",
+        "type": "object"
+      },
       "ChapterDetailRequest": {
         "additionalProperties": false,
         "properties": {
@@ -45,6 +190,29 @@
           "provider"
         ],
         "title": "ChapterPracticeRequest",
+        "type": "object"
+      },
+      "GeneratedStudyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "provider"
+        ],
+        "title": "GeneratedStudyRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -149,10 +317,23 @@
             ],
             "title": "Result"
           },
+          "retry_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Of"
+          },
           "status": {
             "enum": [
               "queued",
               "running",
+              "cancel_requested",
+              "cancelled",
               "succeeded",
               "failed",
               "interrupted"
@@ -173,6 +354,78 @@
           "updated_at"
         ],
         "title": "JobResponse",
+        "type": "object"
+      },
+      "LibraryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library"
+        ],
+        "title": "LibraryRequest",
+        "type": "object"
+      },
+      "MindMapResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "mermaid": {
+            "title": "Mermaid",
+            "type": "string"
+          },
+          "mindmap_id": {
+            "title": "Mindmap Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "root": {
+            "additionalProperties": true,
+            "title": "Root",
+            "type": "object"
+          },
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "mindmap_id",
+          "guide_id",
+          "revision_id",
+          "created_at",
+          "provider",
+          "model",
+          "root",
+          "mermaid",
+          "usage"
+        ],
+        "title": "MindMapResponse",
         "type": "object"
       },
       "NoteRequest": {
@@ -256,6 +509,217 @@
         "title": "PairResponse",
         "type": "object"
       },
+      "PersonalNoteResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "note_id": {
+            "title": "Note Id",
+            "type": "string"
+          },
+          "note_type": {
+            "title": "Note Type",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "timestamp_ms": {
+            "title": "Timestamp Ms",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id",
+          "revision_id",
+          "timestamp_ms",
+          "note_type",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PersonalNoteResponse",
+        "type": "object"
+      },
+      "QuizAttemptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "guide_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "response": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Response",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "provider",
+          "guide_id",
+          "question_id",
+          "response"
+        ],
+        "title": "QuizAttemptRequest",
+        "type": "object"
+      },
+      "QuizAttemptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "response": {
+            "title": "Response",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "succeeded",
+              "feedback_failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "guide_id",
+          "revision_id",
+          "question_id",
+          "response",
+          "submitted_at",
+          "status"
+        ],
+        "title": "QuizAttemptResponse",
+        "type": "object"
+      },
+      "ReflectionAttemptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "feedback": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "reflection_id": {
+            "title": "Reflection Id",
+            "type": "string"
+          },
+          "response": {
+            "title": "Response",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "succeeded",
+              "feedback_failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          }
+        },
+        "required": [
+          "reflection_id",
+          "guide_id",
+          "question_id",
+          "response",
+          "status"
+        ],
+        "title": "ReflectionAttemptResponse",
+        "type": "object"
+      },
       "ReflectionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -303,14 +767,15 @@
       "SourceRequest": {
         "additionalProperties": false,
         "properties": {
-          "bvid": {
+          "expected_bvid": {
             "pattern": "^BV[A-Za-z0-9]{10}$",
-            "title": "Bvid",
+            "title": "Expected Bvid",
             "type": "string"
           },
-          "cid": {
-            "exclusiveMinimum": 0.0,
-            "title": "Cid",
+          "expected_page": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Expected Page",
             "type": "integer"
           },
           "library": {
@@ -318,12 +783,6 @@
             "minLength": 1,
             "title": "Library",
             "type": "string"
-          },
-          "page": {
-            "maximum": 10000.0,
-            "minimum": 1.0,
-            "title": "Page",
-            "type": "integer"
           },
           "provider": {
             "maxLength": 100,
@@ -336,10 +795,272 @@
             "title": "Regenerate",
             "type": "boolean"
           },
-          "title": {
-            "maxLength": 500,
+          "revision_id": {
+            "maxLength": 100,
             "minLength": 1,
-            "title": "Title",
+            "title": "Revision Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "provider",
+          "revision_id",
+          "expected_bvid",
+          "expected_page"
+        ],
+        "title": "SourceRequest",
+        "type": "object"
+      },
+      "StoredGuideSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "track_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Id"
+          }
+        },
+        "required": [
+          "guide_id",
+          "revision_id",
+          "created_at",
+          "provider",
+          "model",
+          "track_id"
+        ],
+        "title": "StoredGuideSummary",
+        "type": "object"
+      },
+      "StudySummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chapter_conclusions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Chapter Conclusions",
+            "type": "array"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "guide_id": {
+            "title": "Guide Id",
+            "type": "string"
+          },
+          "key_connections": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Key Connections",
+            "type": "array"
+          },
+          "learning_goals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Learning Goals",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "summary_id": {
+            "title": "Summary Id",
+            "type": "string"
+          },
+          "unknowns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknowns",
+            "type": "array"
+          },
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "summary_id",
+          "guide_id",
+          "revision_id",
+          "created_at",
+          "provider",
+          "model",
+          "learning_goals",
+          "chapter_conclusions",
+          "key_connections",
+          "unknowns",
+          "usage"
+        ],
+        "title": "StudySummaryResponse",
+        "type": "object"
+      },
+      "StudyWorkspaceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "guide": {
+            "additionalProperties": true,
+            "title": "Guide",
+            "type": "object"
+          },
+          "mindmaps": {
+            "items": {
+              "$ref": "#/components/schemas/MindMapResponse"
+            },
+            "title": "Mindmaps",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/PersonalNoteResponse"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "quiz_attempts": {
+            "items": {
+              "$ref": "#/components/schemas/QuizAttemptResponse"
+            },
+            "title": "Quiz Attempts",
+            "type": "array"
+          },
+          "reflections": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionAttemptResponse"
+            },
+            "title": "Reflections",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "summaries": {
+            "items": {
+              "$ref": "#/components/schemas/StudySummaryResponse"
+            },
+            "title": "Summaries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "guide",
+          "notes",
+          "reflections"
+        ],
+        "title": "StudyWorkspaceResponse",
+        "type": "object"
+      },
+      "TranscriptCueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cue_id": {
+            "title": "Cue Id",
+            "type": "string"
+          },
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cue_id",
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "title": "TranscriptCueResponse",
+        "type": "object"
+      },
+      "TranscriptPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inspect_job_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Inspect Job Id",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "track_display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Track Display Name",
             "type": "string"
           },
           "track_id": {
@@ -347,18 +1068,141 @@
             "pattern": "^[1-9][0-9]*$",
             "title": "Track Id",
             "type": "string"
+          },
+          "track_kind": {
+            "enum": [
+              "human",
+              "ai"
+            ],
+            "title": "Track Kind",
+            "type": "string"
+          },
+          "track_language": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Track Language",
+            "type": "string"
           }
         },
         "required": [
           "library",
-          "provider",
+          "inspect_job_id",
+          "track_id",
+          "track_language",
+          "track_display_name",
+          "track_kind"
+        ],
+        "title": "TranscriptPrepareRequest",
+        "type": "object"
+      },
+      "TranscriptResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bvid": {
+            "title": "Bvid",
+            "type": "string"
+          },
+          "cid": {
+            "title": "Cid",
+            "type": "integer"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptCueResponse"
+            },
+            "title": "Cues",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "inspection_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspection Job Id"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_identity_source": {
+            "title": "Page Identity Source",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source_verification": {
+            "enum": [
+              "verified",
+              "legacy_unverified"
+            ],
+            "title": "Source Verification",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "track_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Track Id"
+          }
+        },
+        "required": [
+          "revision_id",
+          "schema_version",
           "bvid",
           "page",
           "cid",
           "title",
-          "track_id"
+          "track_id",
+          "language",
+          "display_name",
+          "kind",
+          "content_sha256",
+          "created_at",
+          "source_verification",
+          "page_identity_source",
+          "inspection_job_id",
+          "cues"
         ],
-        "title": "SourceRequest",
+        "title": "TranscriptResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -409,6 +1253,49 @@
             "title": "Bvid",
             "type": "string"
           },
+          "collection_index": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Index"
+          },
+          "collection_total": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Total"
+          },
+          "identity_evidence": {
+            "default": "single_video",
+            "enum": [
+              "url_page",
+              "video_pod_page",
+              "video_pod_item",
+              "single_video"
+            ],
+            "title": "Identity Evidence",
+            "type": "string"
+          },
+          "identity_state": {
+            "const": "resolved",
+            "default": "resolved",
+            "title": "Identity State",
+            "type": "string"
+          },
           "library": {
             "maxLength": 100,
             "minLength": 1,
@@ -429,6 +1316,62 @@
         ],
         "title": "VideoInspectRequest",
         "type": "object"
+      },
+      "VideoWorkspaceLookup": {
+        "additionalProperties": false,
+        "properties": {
+          "bvid": {
+            "title": "Bvid",
+            "type": "string"
+          },
+          "guide_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guide Id"
+          },
+          "guide_versions": {
+            "items": {
+              "$ref": "#/components/schemas/StoredGuideSummary"
+            },
+            "title": "Guide Versions",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Id"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bvid",
+          "page",
+          "guide_id",
+          "revision_id"
+        ],
+        "title": "VideoWorkspaceLookup",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -440,10 +1383,144 @@
   },
   "info": {
     "title": "bili-study Local API",
-    "version": "1.1.0"
+    "version": "1.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/cache": {
+      "get": {
+        "operationId": "getCacheInventory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheInventoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Cache Inventory"
+      }
+    },
+    "/api/v1/cache/clear": {
+      "post": {
+        "operationId": "clearCache",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CacheClearRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheClearResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Clear Cache"
+      }
+    },
+    "/api/v1/cache/prune": {
+      "post": {
+        "operationId": "pruneCache",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Prunecache",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Prune Cache"
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "health",
@@ -508,6 +1585,94 @@
           }
         ],
         "summary": " Get Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancelJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Cancel Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/retry": {
+      "post": {
+        "operationId": "retryJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Retry Job"
       }
     },
     "/api/v1/libraries": {
@@ -616,6 +1781,49 @@
           }
         },
         "summary": " Pair"
+      }
+    },
+    "/api/v1/quiz-attempts": {
+      "post": {
+        "operationId": "createQuizAttempt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizAttemptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Create Quiz Attempt"
       }
     },
     "/api/v1/reflections": {
@@ -940,6 +2148,277 @@
         "summary": " Create Chapter Practice"
       }
     },
+    "/api/v1/study-guides/{guide_id}/mindmap": {
+      "post": {
+        "operationId": "createMindMap",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedStudyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Create Mindmap"
+      }
+    },
+    "/api/v1/study-guides/{guide_id}/quiz-attempts": {
+      "get": {
+        "operationId": "listQuizAttempts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QuizAttemptResponse"
+                  },
+                  "title": "Response Listquizattempts",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " List Quiz Attempts"
+      }
+    },
+    "/api/v1/study-guides/{guide_id}/summary": {
+      "post": {
+        "operationId": "createStudySummary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratedStudyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Create Summary"
+      }
+    },
+    "/api/v1/study-guides/{guide_id}/workspace": {
+      "get": {
+        "operationId": "getStudyGuideWorkspace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "guide_id",
+            "required": true,
+            "schema": {
+              "title": "Guide Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyWorkspaceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Get Study Guide Workspace"
+      }
+    },
+    "/api/v1/transcripts/{revision_id}": {
+      "get": {
+        "operationId": "getTranscript",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Get Transcript"
+      }
+    },
     "/api/v1/videos/inspect": {
       "post": {
         "operationId": "inspectVideo",
@@ -981,6 +2460,131 @@
           }
         ],
         "summary": " Inspect Video"
+      }
+    },
+    "/api/v1/videos/{bvid}/pages/{page}/transcripts": {
+      "post": {
+        "operationId": "prepareTranscript",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bvid",
+            "required": true,
+            "schema": {
+              "title": "Bvid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranscriptPrepareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Prepare Transcript"
+      }
+    },
+    "/api/v1/videos/{bvid}/pages/{page}/workspace": {
+      "get": {
+        "operationId": "getVideoWorkspace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bvid",
+            "required": true,
+            "schema": {
+              "title": "Bvid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "title": "Library",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoWorkspaceLookup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": " Get Video Workspace"
       }
     }
   }

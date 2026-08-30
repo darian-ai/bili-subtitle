@@ -4,6 +4,7 @@ from __future__ import annotations
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 # pyright: reportPrivateUsage=false
 import socket
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -21,8 +22,11 @@ from bili_study.domain import (
     EvidenceRef,
     GuidingQuestion,
     StudyGuide,
+    SubtitleTrackAmbiguous,
     SubtitleTrackUnavailable,
+    TranscriptSourceMismatch,
     build_transcript,
+    new_note,
     now_iso,
 )
 from bili_study.jobs import PersistentJobWorker, stable_error_code
@@ -40,8 +44,15 @@ from bili_study.storage import (
     StorageError,
     StudyRepository,
     library_database,
+    publish_generated,
 )
-from bili_subtitle.domain.errors import AuthenticationRequired, NoSubtitles
+from bili_subtitle.domain.errors import (
+    AccessDeniedError,
+    AuthenticationRequired,
+    NoSubtitles,
+    UnsupportedVideoType,
+    VideoNotReadyError,
+)
 from bili_subtitle.domain.models import (
     PageSelection,
     SelectionSource,
@@ -49,6 +60,9 @@ from bili_subtitle.domain.models import (
     SubtitleCue,
     SubtitleTrack,
     SubtitleTrackKind,
+    VideoAccessMode,
+    VideoCapabilities,
+    VideoContainerType,
     VideoMetadata,
     VideoPage,
 )
@@ -142,7 +156,7 @@ def test_api_pair_auth_cors_schema_and_personal_note(
     client, headers = paired_client(paths)
     with client:
         health = client.get("/api/v1/health")
-        assert health.json() == {"status": "ok", "api_version": "1.1.0"}
+        assert health.json() == {"status": "ok", "api_version": "1.4.0"}
         assert client.get("/api/v1/libraries", headers={"Origin": ORIGIN}).status_code == 401
         libraries = client.get("/api/v1/libraries", headers=headers)
         assert libraries.status_code == 200 and libraries.json()["libraries"][0]["name"] == "main"
@@ -194,6 +208,97 @@ def test_api_pair_auth_cors_schema_and_personal_note(
         )
 
 
+def test_cache_api_requires_preview_and_preserves_personal_content(
+    paths: AppPaths, allow_testclient_socketpair: None
+) -> None:
+    del allow_testclient_socketpair
+    client, headers = paired_client(paths)
+    library = LibraryRegistry(paths).get("main")
+    repository = StudyRepository(library_database(paths, library))
+    revision = repository.latest_transcript()
+    evidence = EvidenceRef(revision.revision_id, "c000001", "c000001")
+    guide = StudyGuide(
+        "guide-cache",
+        1,
+        revision.revision_id,
+        "cache-fingerprint",
+        "zh-CN",
+        ("目标",),
+        (Chapter("ch001", "章节", "总结", evidence),),
+        now_iso(),
+    )
+    repository.cache_put("cache-fingerprint", "study_guide", {"created_at": guide.created_at})
+    repository.save_guide(
+        guide,
+        {**guide_to_payload(guide), "provider": "provider-a", "model": "model-a"},
+    )
+    note = new_note(
+        revision_id=revision.revision_id,
+        timestamp_ms=10,
+        note_type="note",
+        body="保留笔记",
+    )
+    repository.save_note(note)
+    repository.save_reflection(
+        "attempt-cache",
+        revision.revision_id,
+        "q1",
+        {"response": "保留回答", "status": "feedback_failed"},
+    )
+    published = publish_generated(library, guide.guide_id, "# generated\n")
+
+    with client:
+        inventory = client.get("/api/v1/cache?library=main", headers=headers)
+        assert inventory.json()["rebuildable_generation_items"] == 1
+        preview = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={"library": "main", "provider": "provider-a"},
+        )
+        assert preview.status_code == 200 and not preview.json()["cleared"]
+        assert repository.guide_payload(guide.guide_id)["guide_id"] == guide.guide_id
+        published.write_text("# generated changed after preview\n", encoding="utf-8")
+        changed = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={
+                "library": "main",
+                "provider": "provider-a",
+                "confirmation": preview.json()["confirmation"],
+            },
+        )
+        assert changed.status_code == 409
+        preview = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={"library": "main", "provider": "provider-a"},
+        )
+        rejected = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={
+                "library": "main",
+                "provider": "provider-a",
+                "confirmation": "0" * 64,
+            },
+        )
+        assert rejected.status_code == 409
+        cleared = client.post(
+            "/api/v1/cache/clear",
+            headers=headers,
+            json={
+                "library": "main",
+                "provider": "provider-a",
+                "confirmation": preview.json()["confirmation"],
+            },
+        )
+        assert cleared.json()["cleared"] and cleared.json()["items"] == 1
+    assert not published.exists()
+    assert repository.get_transcript(revision.revision_id) == revision
+    assert repository.notes(revision.revision_id) == (note,)
+    assert repository.reflections(revision.revision_id)[0]["response"] == "保留回答"
+
+
 def test_api_rejects_host_origin_pair_reuse_and_large_request(
     paths: AppPaths, allow_testclient_socketpair: None
 ) -> None:
@@ -236,8 +341,23 @@ def test_api_rejects_host_origin_pair_reuse_and_large_request(
 
 def test_openapi_is_versioned_and_declares_bearer_security(paths: AppPaths) -> None:
     schema = create_app(paths=paths).openapi()
-    assert schema["info"]["version"] == "1.1.0"
+    assert schema["info"]["version"] == "1.4.0"
     assert "/api/v1/reflections" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/workspace" in schema["paths"]
+    assert "/api/v1/videos/{bvid}/pages/{page}/transcripts" in schema["paths"]
+    assert "/api/v1/transcripts/{revision_id}" in schema["paths"]
+    assert "/api/v1/jobs/{job_id}/cancel" in schema["paths"]
+    assert "/api/v1/quiz-attempts" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/quiz-attempts" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/summary" in schema["paths"]
+    assert "/api/v1/study-guides/{guide_id}/mindmap" in schema["paths"]
+    assert "/api/v1/cache/clear" in schema["paths"]
+    source_fields = schema["components"]["schemas"]["SourceRequest"]["properties"]
+    assert "cid" not in source_fields and "title" not in source_fields
+    assert {"revision_id", "expected_bvid", "expected_page"} <= source_fields.keys()
+    assert (
+        schema["components"]["schemas"]["StudyWorkspaceResponse"]["additionalProperties"] is False
+    )
     assert schema["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
     assert schema["paths"]["/api/v1/pair"]["post"].get("security") is None
 
@@ -295,7 +415,8 @@ def test_persistent_worker_serializes_classifies_and_recovers(paths: AppPaths) -
 
     interrupted = repository.create_job("ok", {"number": 3}, "start")
     assert repository.claim_job(interrupted, "running")
-    assert repository.recover_jobs("restart") == (interrupted,)
+    assert repository.recover_jobs("restart") == ()
+    assert repository.job(interrupted)["status"] == "interrupted"
     assert repository.job(interrupted)["error_code"] == "service_restarted"
 
 
@@ -313,6 +434,62 @@ def test_job_progress_is_persisted_and_monotonic(paths: AppPaths) -> None:
         repository.update_job_progress(job_id, "fetching_transcript", 10, "invalid")
 
 
+def test_job_cancel_retry_and_restart_do_not_replay_running_work(paths: AppPaths) -> None:
+    repository = StudyRepository(paths.state_dir / "cancel.sqlite3")
+    queued = repository.create_job("guide", {"value": "original"}, "created")
+    assert repository.cancel_job(queued, "cancelled") == "cancelled"
+    assert repository.cancel_job(queued, "again") == "cancelled"
+    retry = repository.retry_job(queued, "retry")
+    assert retry == ("guide", queued, {"value": "original"})
+    assert retry is not None
+
+    new_job = repository.create_job(retry[0], retry[2], "retry", retry_of=retry[1])
+    assert repository.job(new_job)["retry_of"] == queued
+    running = repository.create_job("guide", {}, "created")
+    assert repository.claim_job(running, "running")
+    assert repository.cancel_job(running, "requested") == "cancel_requested"
+    assert repository.recover_jobs("restart") == (new_job,)
+    assert repository.job(running)["status"] == "interrupted"
+
+    raced = repository.create_job("guide", {}, "created")
+    assert repository.claim_job(raced, "running")
+    assert repository.cancel_job(raced, "requested") == "cancel_requested"
+    repository.complete_job(
+        raced, status="succeeded", result={"late": True}, error_code=None, timestamp="late"
+    )
+    assert repository.job(raced)["status"] == "cancelled"
+    assert repository.job(raced)["result"] is None
+
+
+def test_inflight_cancel_discards_late_worker_result(paths: AppPaths) -> None:
+    repository = StudyRepository(paths.state_dir / "inflight.sqlite3")
+    worker = PersistentJobWorker(repository)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def handler(_raw: dict[str, object], progress: object) -> dict[str, object]:
+        entered.set()
+        assert release.wait(timeout=2)
+        assert callable(progress)
+        progress("after_provider", 80)
+        return {"must_not_be_saved": True}
+
+    worker.register("guide", handler)
+    worker.start()
+    job_id = worker.submit("guide", {})
+    assert entered.wait(timeout=2)
+    assert worker.cancel(job_id) == "cancel_requested"
+    release.set()
+    deadline = time.monotonic() + 2
+    while repository.job(job_id)["status"] not in {"cancelled", "failed"}:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    worker.stop()
+    record = repository.job(job_id)
+    assert record["status"] == "cancelled"
+    assert record["result"] is None
+
+
 def test_stable_error_codes_do_not_expose_exception_text() -> None:
     assert stable_error_code(NoSubtitles("subtitle body")) == "no_subtitles"
     assert stable_error_code(ProviderAuthError("provider response")) == "authentication"
@@ -320,6 +497,10 @@ def test_stable_error_codes_do_not_expose_exception_text() -> None:
         stable_error_code(SubtitleTrackUnavailable("selected track"))
         == "subtitle_track_unavailable"
     )
+    assert stable_error_code(SubtitleTrackAmbiguous("same name")) == "subtitle_track_ambiguous"
+    assert stable_error_code(UnsupportedVideoType("secret")) == "unsupported_video_type"
+    assert stable_error_code(VideoNotReadyError("secret")) == "video_not_ready"
+    assert stable_error_code(AccessDeniedError("secret")) == "video_access_denied"
     assert stable_error_code(RuntimeError("canary-secret")) == "internal_error"
 
 
@@ -385,17 +566,58 @@ def test_async_api_routes_and_guide_read_model(
         now_iso(),
     )
     repository.save_guide(guide, guide_to_payload(guide))
+    note = new_note(
+        revision_id=transcript.revision_id,
+        timestamp_ms=500,
+        note_type="note",
+        body="保存的笔记",
+    )
+    repository.save_note(note)
+    repository.save_reflection(
+        "reflection-saved",
+        transcript.revision_id,
+        question.question_id,
+        {
+            "reflection_id": "reflection-saved",
+            "guide_id": guide.guide_id,
+            "question_id": question.question_id,
+            "response": "保存的回答",
+            "status": "succeeded",
+            "feedback": {"covered": ["要点"], "missing": [], "misconceptions": []},
+        },
+    )
     jobs = StudyRepository(paths.state_dir / "test-api-jobs.sqlite3")
     worker = PersistentJobWorker(jobs)
     monkeypatch.setattr(
         api_module,
         "_inspect_job",
-        lambda _paths, raw, _progress: {"bvid": raw["bvid"], "tracks": []},
+        lambda _paths, raw, _progress: {
+            "bvid": raw["bvid"],
+            "page": raw["page"],
+            "cid": 10,
+            "tracks": [
+                {
+                    "track_id": "9",
+                    "language": "zh-CN",
+                    "display_name": "中文",
+                    "kind": "human",
+                }
+            ],
+        },
     )
     monkeypatch.setattr(
         api_module,
         "_guide_job",
         lambda _paths, _raw, _progress: {"guide_id": guide.guide_id},
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_transcript_job",
+        lambda _paths, raw, _progress: {
+            "bvid": raw["bvid"],
+            "page": raw["page"],
+            "revision_id": transcript.revision_id,
+        },
     )
     monkeypatch.setattr(
         api_module,
@@ -425,14 +647,48 @@ def test_async_api_routes_and_guide_read_model(
         )
         assert inspect.status_code == 202
         assert _wait_api_job(client, inspect.json()["job_id"], headers)["status"] == "succeeded"
+        mismatched = client.post(
+            "/api/v1/videos/BV1yy411c7mD/pages/1/transcripts",
+            headers=headers,
+            json={
+                "library": "main",
+                "inspect_job_id": inspect.json()["job_id"],
+                "track_id": "9",
+                "track_language": "zh-CN",
+                "track_display_name": "中文",
+                "track_kind": "human",
+            },
+        )
+        assert mismatched.status_code == 409
+        assert mismatched.json()["error"]["code"] == "inspection_source_mismatch"
+        prepared = client.post(
+            f"/api/v1/videos/{transcript.bvid}/pages/1/transcripts",
+            headers=headers,
+            json={
+                "library": "main",
+                "inspect_job_id": inspect.json()["job_id"],
+                "track_id": "9",
+                "track_language": "zh-CN",
+                "track_display_name": "中文",
+                "track_kind": "human",
+            },
+        )
+        assert _wait_api_job(client, prepared.json()["job_id"], headers)["result"] == {
+            "bvid": transcript.bvid,
+            "page": 1,
+            "revision_id": transcript.revision_id,
+        }
+        transcript_read = client.get(
+            f"/api/v1/transcripts/{transcript.revision_id}?library=main", headers=headers
+        )
+        assert transcript_read.json()["track_id"] == "9"
+        assert transcript_read.json()["cues"][1]["text"] == "第二句"
         source = {
             "library": "main",
             "provider": "test",
-            "bvid": transcript.bvid,
-            "page": 1,
-            "cid": 10,
-            "title": "标题",
-            "track_id": "9",
+            "revision_id": transcript.revision_id,
+            "expected_bvid": transcript.bvid,
+            "expected_page": 1,
         }
         accepted = client.post("/api/v1/study-guides", headers=headers, json=source)
         assert _wait_api_job(client, accepted.json()["job_id"], headers)["result"] == {
@@ -441,6 +697,60 @@ def test_async_api_routes_and_guide_read_model(
         read = client.get("/api/v1/study-guides/guide-1?library=main", headers=headers)
         assert read.json()["chapters"][0]["start_ms"] == 0
         assert read.json()["chapters"][0]["questions"][0]["end_ms"] == 2000
+        workspace = client.get(
+            f"/api/v1/videos/{transcript.bvid}/pages/1/workspace?library=main",
+            headers=headers,
+        )
+        assert workspace.json()["guide_id"] == guide.guide_id
+        assert workspace.json()["revision_id"] == transcript.revision_id
+        assert workspace.json()["guide_versions"] == [
+            {
+                "guide_id": guide.guide_id,
+                "revision_id": transcript.revision_id,
+                "created_at": guide.created_at,
+                "provider": None,
+                "model": None,
+                "track_id": transcript.track_id,
+            }
+        ]
+        full_workspace = client.get(
+            f"/api/v1/study-guides/{guide.guide_id}/workspace?library=main",
+            headers=headers,
+        )
+        assert full_workspace.status_code == 200
+        assert full_workspace.json()["guide"]["guide_id"] == guide.guide_id
+        assert full_workspace.json()["notes"][0]["body"] == "保存的笔记"
+        assert full_workspace.json()["reflections"][0]["response"] == "保存的回答"
+        empty_workspace = client.get(
+            f"/api/v1/videos/{transcript.bvid}/pages/2/workspace?library=main",
+            headers=headers,
+        )
+        assert empty_workspace.json()["guide_id"] is None
+        assert empty_workspace.json()["revision_id"] is None
+
+        cancellable = jobs.create_job(
+            "video_inspect",
+            {"library": "main", "bvid": transcript.bvid, "page": 1},
+            "queued",
+        )
+        cancelled = client.post(f"/api/v1/jobs/{cancellable}/cancel", headers=headers)
+        assert cancelled.json()["status"] == "cancelled"
+        assert client.post(f"/api/v1/jobs/{cancellable}/cancel", headers=headers).status_code == 200
+        retried = client.post(f"/api/v1/jobs/{cancellable}/retry", headers=headers)
+        assert retried.status_code == 202
+        retried_record = _wait_api_job(client, retried.json()["job_id"], headers)
+        assert retried_record["retry_of"] == cancellable
+        terminal_cancel = client.post(
+            f"/api/v1/jobs/{retried.json()['job_id']}/cancel", headers=headers
+        )
+        assert terminal_cancel.status_code == 409
+        assert terminal_cancel.json()["error"]["code"] == "job_not_cancellable"
+        assert (
+            client.post(
+                f"/api/v1/jobs/{retried.json()['job_id']}/retry", headers=headers
+            ).status_code
+            == 409
+        )
         detail = client.post(
             "/api/v1/study-guides/guide-1/chapters/ch001/details",
             headers=headers,
@@ -534,8 +844,10 @@ def test_platform_inspect_and_transcript_download_adapters(
         def __init__(self, client: object) -> None:
             del client
 
-        def discover(self, *, bvid: str, cid: int) -> tuple[SubtitleTrack, ...]:
-            assert bvid == "BV1xx411c7mD" and cid == 55
+        def discover(
+            self, *, bvid: str, cid: int, aid: int | None = None
+        ) -> tuple[SubtitleTrack, ...]:
+            assert bvid == "BV1xx411c7mD" and cid == 55 and aid == 1
             return (track,)
 
         def discard_pending(self, *, bvid: str, cid: int) -> None:
@@ -546,6 +858,12 @@ def test_platform_inspect_and_transcript_download_adapters(
         paths, {"library": "main", "bvid": "BV1xx411c7mD", "page": 2}
     )
     assert inspected["subtitle_status"] == "available"
+    assert inspected["schema_version"] == 2
+    assert inspected["video_type"] == "standard_ugc"
+    assert inspected["container_type"] == "standalone"
+    assert inspected["access_mode"] == "public"
+    assert inspected["support_status"] == "supported"
+    assert inspected["limitations"] == []
     assert inspected["tracks"] == [
         {
             "track_id": "2080600637229272576",
@@ -567,21 +885,104 @@ def test_platform_inspect_and_transcript_download_adapters(
         {
             "bvid": "BV1xx411c7mD",
             "page": 2,
-            "cid": 55,
+            "inspected_cid": 55,
+            "inspect_job_id": "inspect-1",
             "title": "标题",
             "track_id": "2080600637229272576",
         }
     )
     assert transcript.cues[0].start_ms == 1200 and transcript.cues[0].end_ms == 1201
+    library = LibraryRegistry(paths).create("main", paths.config_dir / "vault-transcript")
+    progress: list[tuple[str, int]] = []
+    prepared = api_module._transcript_job(
+        paths,
+        {
+            "library": "main",
+            "bvid": "BV1xx411c7mD",
+            "page": 2,
+            "inspected_cid": 55,
+            "inspect_job_id": "inspect-1",
+            "track_id": "2080600637229272576",
+            "track_language": "zh-CN",
+            "track_display_name": "中文",
+            "track_kind": "human",
+        },
+        lambda phase, percent: progress.append((phase, percent)),
+    )
+    assert prepared["revision_id"] == transcript.revision_id
+    assert progress == [("fetching_transcript", 10), ("validating_transcript", 85)]
+    saved = StudyRepository(library_database(paths, library)).latest_transcript()
+    assert saved.revision_id == transcript.revision_id
+    assert saved.cues == transcript.cues
     with pytest.raises(Exception, match="轨道"):
         api_module._download_transcript(
             {
                 "bvid": "BV1xx411c7mD",
                 "page": 2,
-                "cid": 55,
+                "inspected_cid": 55,
+                "inspect_job_id": "inspect-1",
                 "title": "标题",
                 "track_id": 999,
             }
+        )
+
+
+def test_platform_inspect_marks_entitled_collection_as_conditional(
+    paths: AppPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = VideoPage(1, 55, "分集")
+    capabilities = VideoCapabilities(
+        container_type=VideoContainerType.UGC_SEASON,
+        access_mode=VideoAccessMode.ENTITLED,
+    )
+    selection = PageSelection(
+        VideoMetadata(1, "BV1xx411c7mD", "标题", (page,), capabilities),
+        (page,),
+        SelectionSource.EXPLICIT_PAGE,
+    )
+    monkeypatch.setattr(api_module, "_platform_client", lambda: (FakePlatformClient(), object()))
+    monkeypatch.setattr(api_module, "resolve_selection", lambda *args, **kwargs: selection)
+
+    class NoSubtitleAdapter:
+        def __init__(self, client: object) -> None:
+            del client
+
+        def discover(self, **kwargs: object) -> tuple[SubtitleTrack, ...]:
+            del kwargs
+            raise NoSubtitles("none")
+
+        def discard_pending(self, **kwargs: object) -> None:
+            del kwargs
+
+    monkeypatch.setattr(api_module, "BilibiliSubtitleAdapter", NoSubtitleAdapter)
+    inspected = api_module._inspect_job(
+        paths, {"library": "main", "bvid": "BV1xx411c7mD", "page": 1}
+    )
+    assert inspected["support_status"] == "conditional"
+    assert inspected["limitations"] == [
+        "current_item_only",
+        "existing_entitlement_required",
+    ]
+
+
+def test_rotated_track_id_is_rejected_even_with_a_unique_stable_descriptor() -> None:
+    old_id = "2080600637229272576"
+    replacement = SubtitleTrack(9, "zh-CN", "中文", SubtitleTrackKind.HUMAN)
+    raw = {
+        "track_id": old_id,
+        "track_language": "zh-CN",
+        "track_display_name": "中文",
+        "track_kind": "human",
+    }
+    with pytest.raises(SubtitleTrackUnavailable):
+        api_module._select_subtitle_track((replacement,), raw)
+
+    exact = SubtitleTrack(int(old_id), "zh-CN", "中文", SubtitleTrackKind.HUMAN)
+    assert api_module._select_subtitle_track((replacement, exact), raw) == exact
+
+    with pytest.raises(SubtitleTrackUnavailable):
+        api_module._select_subtitle_track(
+            (replacement, SubtitleTrack(10, "zh-CN", "中文", SubtitleTrackKind.HUMAN)), raw
         )
 
 
@@ -642,27 +1043,216 @@ def test_guide_job_reuses_stage_eight_generation(
 
     monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda *_args: ChatContext())
     monkeypatch.setattr(api_module, "GuideGenerator", Generator)
+    StudyRepository(library_database(paths, library)).save_transcript(transcript)
     completed = api_module._guide_job(
         paths,
         {
             "library": "main",
             "provider": "test",
             "regenerate": True,
-            "bvid": transcript.bvid,
-            "page": 1,
-            "cid": 1,
-            "title": "标题",
-            "track_id": 1,
+            "revision_id": transcript.revision_id,
+            "expected_bvid": transcript.bvid,
+            "expected_page": 1,
         },
     )
     assert completed == {
         "guide_id": "guide-job",
         "source_id": transcript.revision_id,
+        "revision_id": transcript.revision_id,
+        "bvid": transcript.bvid,
+        "page": 1,
         "cache_hit": False,
+        "usage": {
+            "requests": 1,
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "elapsed_ms": 10,
+            "cache_hit": False,
+            "estimated_cost": None,
+            "currency": None,
+        },
     }
     repository = StudyRepository(library_database(paths, library))
     assert repository.get_transcript(transcript.revision_id) == transcript
     assert (library.path / "generated" / "videos" / "guide-job.md").exists()
+
+
+def test_summary_and_mindmap_jobs_persist_versioned_artifacts(
+    paths: AppPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = LibraryRegistry(paths).create("main", paths.config_dir / "vault-artifacts")
+    repository = StudyRepository(library_database(paths, library))
+    transcript = build_transcript(
+        bvid="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="课程",
+        track_id=1,
+        language="zh-CN",
+        display_name="中文",
+        kind="human",
+        cue_values=((0, 1000, "内容"),),
+    )
+    repository.save_transcript(transcript)
+    evidence = EvidenceRef(transcript.revision_id, "c000001", "c000001")
+    guide = StudyGuide(
+        "guide-artifacts",
+        1,
+        transcript.revision_id,
+        "fingerprint-artifacts",
+        "zh-CN",
+        ("目标",),
+        (Chapter("ch001", "章节", "总结", evidence),),
+        now_iso(),
+    )
+    repository.save_guide(guide, guide_to_payload(guide))
+    config = ProviderConfig(
+        "test",
+        "https://model.example/v1",
+        "model",
+        input_price_per_million=Decimal("1"),
+        output_price_per_million=Decimal("2"),
+        currency="USD",
+    )
+    monkeypatch.setattr(api_module.ProviderConfigStore, "get", lambda _self, _name: config)
+    monkeypatch.setattr(api_module.ProviderSecretStore, "get", lambda _self, _name: "secret")
+
+    class ChatContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+    class Generator:
+        def __init__(self, chat: object, saved: object) -> None:
+            del chat, saved
+
+        def generate_summary(
+            self, value: object, saved_guide: object
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            assert value == transcript and saved_guide == guide
+            return {
+                "learning_goals": [{"text": "目标", "evidence": {}}],
+                "chapter_conclusions": [{"text": "结论", "evidence": {}}],
+                "key_connections": [{"text": "联系", "evidence": {}}],
+                "unknowns": ["未知"],
+            }, GenerationMetrics(1, 100, 50, 150, 10, False)
+
+        def generate_mindmap(
+            self, value: object, saved_guide: object
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            assert value == transcript and saved_guide == guide
+            return {
+                "root": {"node_id": "n1", "label": "课程", "evidence": {}, "children": []},
+                "mermaid": "mindmap\n  n1[课程]\n",
+            }, GenerationMetrics(1, 100, 50, 150, 10, False)
+
+    monkeypatch.setattr(api_module, "OpenAIChatAdapter", lambda *_args: ChatContext())
+    monkeypatch.setattr(api_module, "GuideGenerator", Generator)
+    request = {"library": "main", "provider": "test", "guide_id": guide.guide_id}
+    summary = api_module._summary_job(paths, request)
+    mindmap = api_module._mindmap_job(paths, request)
+    assert summary["revision_id"] == transcript.revision_id
+    assert summary["usage"]["estimated_cost"] == "0.000200"
+    assert mindmap["mermaid"].startswith("mindmap")
+    assert repository.summaries(guide.guide_id)[0]["summary_id"] == summary["summary_id"]
+    assert repository.mindmaps(guide.guide_id)[0]["mindmap_id"] == mindmap["mindmap_id"]
+    assert (library.path / "generated" / "videos" / f"{summary['summary_id']}.md").exists()
+    assert (library.path / "generated" / "videos" / f"{mindmap['mindmap_id']}.md").exists()
+
+
+def test_existing_guide_short_circuits_before_platform_and_provider(
+    paths: AppPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = LibraryRegistry(paths).create("main", paths.config_dir / "vault-existing")
+    repository = StudyRepository(library_database(paths, library))
+    transcript = build_transcript(
+        bvid="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="标题",
+        track_id=1,
+        language="zh-CN",
+        display_name="中文",
+        kind="human",
+        cue_values=((0, 1000, "内容"),),
+    )
+    repository.save_transcript(transcript)
+    evidence = EvidenceRef(transcript.revision_id, "c000001", "c000001")
+    guide = StudyGuide(
+        "guide-existing",
+        1,
+        transcript.revision_id,
+        "fingerprint",
+        "zh-CN",
+        ("目标",),
+        (Chapter("ch001", "章节", "总结", evidence),),
+        now_iso(),
+    )
+    repository.save_guide(guide, guide_to_payload(guide))
+    monkeypatch.setattr(
+        api_module,
+        "_download_transcript",
+        lambda _raw: pytest.fail("已有指南不得再次访问 Bilibili"),
+    )
+    monkeypatch.setattr(
+        api_module.ProviderConfigStore,
+        "get",
+        lambda _self, _name: pytest.fail("已有指南不得读取 Provider"),
+    )
+
+    result = api_module._guide_job(
+        paths,
+        {
+            "library": "main",
+            "provider": "missing",
+            "regenerate": False,
+            "revision_id": transcript.revision_id,
+            "expected_bvid": transcript.bvid,
+            "expected_page": 1,
+        },
+    )
+
+    assert result["guide_id"] == guide.guide_id
+    assert result["reused_existing"] is True
+
+
+def test_guide_revision_must_match_expected_page_before_provider(
+    paths: AppPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = LibraryRegistry(paths).create("main", paths.config_dir / "vault-mismatch")
+    repository = StudyRepository(library_database(paths, library))
+    transcript = build_transcript(
+        bvid="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="第一集",
+        track_id=1,
+        language="zh-CN",
+        display_name="中文",
+        kind="human",
+        cue_values=((0, 1000, "内容"),),
+    )
+    repository.save_transcript(transcript)
+    monkeypatch.setattr(
+        api_module.ProviderConfigStore,
+        "get",
+        lambda *_args: pytest.fail("来源不匹配时不得读取 Provider"),
+    )
+    with pytest.raises(TranscriptSourceMismatch):
+        api_module._guide_job(
+            paths,
+            {
+                "library": "main",
+                "provider": "unused",
+                "revision_id": transcript.revision_id,
+                "expected_bvid": transcript.bvid,
+                "expected_page": 2,
+            },
+        )
+    assert stable_error_code(TranscriptSourceMismatch("mismatch")) == "transcript_source_mismatch"
 
 
 def test_detail_job_persists_generated_content(
@@ -724,6 +1314,21 @@ def test_detail_job_persists_generated_content(
     )
     assert result["detail"] == {"summary": "详情"}
     assert repository.chapter_details("guide-detail") == {"ch001": {"summary": "详情"}}
+    monkeypatch.setattr(
+        api_module.ProviderConfigStore,
+        "get",
+        lambda _self, _name: pytest.fail("已有详情不得读取 Provider"),
+    )
+    reused = api_module._detail_job(
+        paths,
+        {
+            "library": "main",
+            "provider": "missing",
+            "guide_id": "guide-detail",
+            "chapter_id": "ch001",
+        },
+    )
+    assert reused["reused_existing"] is True
 
 
 def test_practice_job_persists_questions(paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -809,6 +1414,22 @@ def test_practice_job_persists_questions(paths: AppPaths, monkeypatch: pytest.Mo
     )
     assert result["chapter_id"] == "ch001"
     assert repository.chapter_practices(guide.guide_id) == {"ch001": practice}
+    monkeypatch.setattr(
+        api_module.ProviderConfigStore,
+        "get",
+        lambda _self, _name: pytest.fail("已有练习不得读取 Provider"),
+    )
+    reused_practice = api_module._practice_job(
+        paths,
+        {
+            "library": "main",
+            "provider": "missing",
+            "guide_id": guide.guide_id,
+            "chapter_id": "ch001",
+        },
+    )
+    assert reused_practice["reused_existing"] is True
+    monkeypatch.setattr(api_module.ProviderConfigStore, "get", lambda _self, _name: config)
     reflection = api_module._reflection_job(
         paths,
         {
@@ -826,6 +1447,49 @@ def test_practice_job_persists_questions(paths: AppPaths, monkeypatch: pytest.Mo
         "evidence": [{"start_cue_id": "c000001", "end_cue_id": "c000001"}],
     }
     assert any((library.path / "reviews").glob("*.md"))
+    saved_reflection = repository.reflections(transcript.revision_id)[0]
+    assert saved_reflection["status"] == "succeeded"
+    assert saved_reflection["response"] == "我的回答"
+    monkeypatch.setattr(
+        api_module.ProviderConfigStore,
+        "get",
+        lambda _self, _name: pytest.fail("已有反馈不得读取 Provider"),
+    )
+    reused_reflection = api_module._reflection_job(
+        paths,
+        {
+            "library": "main",
+            "provider": "missing",
+            "guide_id": guide.guide_id,
+            "question_id": "q-ch001-01",
+            "response": "我的回答",
+        },
+    )
+    assert reused_reflection["reused_existing"] is True
+    monkeypatch.setattr(api_module.ProviderConfigStore, "get", lambda _self, _name: config)
+
+    class FailingGenerator(Generator):
+        def generate_reflection(
+            self, value: object, question: GuidingQuestion, response: str
+        ) -> tuple[dict[str, object], GenerationMetrics]:
+            del value, question, response
+            raise RuntimeError("invalid provider output")
+
+    monkeypatch.setattr(api_module, "GuideGenerator", FailingGenerator)
+    with pytest.raises(RuntimeError, match="invalid provider output"):
+        api_module._reflection_job(
+            paths,
+            {
+                "library": "main",
+                "provider": "test",
+                "guide_id": guide.guide_id,
+                "question_id": "q-ch001-01",
+                "response": "不能丢失的回答",
+            },
+        )
+    failed_reflection = repository.reflections(transcript.revision_id)[-1]
+    assert failed_reflection["status"] == "feedback_failed"
+    assert failed_reflection["response"] == "不能丢失的回答"
 
 
 def test_evidence_times_are_added_recursively() -> None:

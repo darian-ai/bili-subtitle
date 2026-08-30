@@ -16,7 +16,14 @@ from bili_subtitle.domain.errors import (
     RedirectError,
     VideoNotFoundError,
 )
-from bili_subtitle.domain.models import VideoMetadata, VideoPage
+from bili_subtitle.domain.models import (
+    VideoAccessMode,
+    VideoCapabilities,
+    VideoContainerType,
+    VideoMetadata,
+    VideoPage,
+    VideoType,
+)
 
 _VIEW_API = "https://api.bilibili.com/x/web-interface/view"
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -130,4 +137,63 @@ def _parse_video_data(data: Mapping[object, object]) -> VideoMetadata:
         ):
             raise PlatformResponseError("平台返回的分集字段缺失或类型错误。")
         pages.append(VideoPage(number, cid, part))
-    return VideoMetadata(aid, bvid, title, tuple(pages))
+    return VideoMetadata(aid, bvid, title, tuple(pages), _parse_capabilities(data))
+
+
+def _platform_flag(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    return None
+
+
+def _parse_capabilities(data: Mapping[object, object]) -> VideoCapabilities:
+    rights = data.get("rights")
+    if not isinstance(rights, Mapping):
+        return VideoCapabilities(video_type=VideoType.UNKNOWN)
+    typed_rights = cast(Mapping[object, object], rights)
+
+    stein = _platform_flag(typed_rights.get("is_stein_gate"))
+    story = _platform_flag(data.get("is_story"))
+    season = _platform_flag(data.get("is_season_display"))
+    access_flags = (
+        _platform_flag(data.get("is_chargeable_season")),
+        _platform_flag(data.get("is_upower_exclusive")),
+        _platform_flag(data.get("is_upower_play")),
+        _platform_flag(typed_rights.get("ugc_pay")),
+        _platform_flag(typed_rights.get("arc_pay")),
+    )
+    preview_flags = (
+        _platform_flag(typed_rights.get("ugc_pay_preview")),
+        _platform_flag(typed_rights.get("free_watch")),
+    )
+    if (
+        stein is None
+        or story is None
+        or season is None
+        or any(value is None for value in access_flags + preview_flags)
+    ):
+        return VideoCapabilities(video_type=VideoType.UNKNOWN)
+
+    video_type = (
+        VideoType.INTERACTIVE_UGC
+        if stein
+        else VideoType.STORY_UGC
+        if story
+        else VideoType.STANDARD_UGC
+    )
+    access_mode = (
+        VideoAccessMode.PREVIEW
+        if any(preview_flags)
+        else VideoAccessMode.ENTITLED
+        if any(access_flags)
+        else VideoAccessMode.PUBLIC
+    )
+    premiere = data.get("premiere")
+    return VideoCapabilities(
+        video_type=video_type,
+        container_type=(VideoContainerType.UGC_SEASON if season else VideoContainerType.STANDALONE),
+        access_mode=access_mode,
+        premiere=isinstance(premiere, Mapping) and len(cast(Mapping[object, object], premiere)) > 0,
+    )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 from urllib.parse import urlparse
 
@@ -48,6 +49,9 @@ class ProviderConfig:
     output_language: str = "zh-CN"
     context_budget: int = 12000
     temperature: float = 0.2
+    input_price_per_million: Decimal | None = None
+    output_price_per_million: Decimal | None = None
+    currency: str | None = None
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.base_url)
@@ -57,6 +61,21 @@ class ProviderConfig:
             raise ProviderError("Provider 名称、模型和输出语言不能为空。")
         if not 1000 <= self.context_budget <= 200000 or not 0 <= self.temperature <= 2:
             raise ProviderError("Provider 上下文预算或 temperature 无效。")
+        prices = (self.input_price_per_million, self.output_price_per_million)
+        if (prices[0] is None) != (prices[1] is None):
+            raise ProviderError("Provider 输入和输出单价必须同时设置。")
+        if any(value is not None and value < 0 for value in prices):
+            raise ProviderError("Provider 单价不能为负数。")
+        if prices[0] is not None and (
+            self.currency is None
+            or len(self.currency) != 3
+            or not self.currency.isascii()
+            or not self.currency.isalpha()
+            or self.currency != self.currency.upper()
+        ):
+            raise ProviderError("Provider 币种必须是三位大写字母。")
+        if prices[0] is None and self.currency is not None:
+            raise ProviderError("未设置单价时不能单独设置币种。")
 
 
 class ProviderConfigStore:
@@ -82,7 +101,11 @@ class ProviderConfigStore:
 
     def set(self, config: ProviderConfig) -> None:
         values = self._read()
-        values[config.name] = asdict(config)
+        serialized = asdict(config)
+        for field in ("input_price_per_million", "output_price_per_million"):
+            value = serialized[field]
+            serialized[field] = str(value) if value is not None else None
+        values[config.name] = serialized
         atomic_write(
             self.path, json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True).encode()
         )
@@ -97,6 +120,9 @@ class ProviderConfigStore:
                 output_language=str(raw.get("output_language", "zh-CN")),
                 context_budget=int(cast(int, raw.get("context_budget", 12000))),
                 temperature=float(cast(float, raw.get("temperature", 0.2))),
+                input_price_per_million=_optional_decimal(raw.get("input_price_per_million")),
+                output_price_per_million=_optional_decimal(raw.get("output_price_per_million")),
+                currency=str(raw["currency"]) if raw.get("currency") is not None else None,
             )
         except KeyError as exc:
             raise ProviderError("Provider 配置不存在。") from exc
@@ -241,3 +267,12 @@ class OpenAIChatAdapter:
 
 def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ProviderError("Provider 单价格式无效。") from exc

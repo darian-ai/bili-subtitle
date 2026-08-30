@@ -1,7 +1,16 @@
 # CHANGELOG
 
+## 0.2.0 - 2026-08-27
+
+- 新增 v3→v4 安全迁移、BV/P 来源索引、完整 workspace 自动恢复和历史指南版本选择。
+- 新增任务取消/显式重试、usage 与 Decimal 成本估算、缓存 inventory/prune 和带预览确认的生成物清理。
+- 新增持久主动小测、证据化总结、受限 MindMapTree 与本地确定性 Mermaid；个人笔记和作答不进入总结输入。
+- 加固多 P/WBI 精确轨道、标签页归属、扩展重载生命周期、完整字幕时间轴、无障碍与长视频恢复。
+- 新增 Chrome/Edge 确定性归档与 SHA-256 清单脚本；真实双浏览器、Provider 和 Windows CI 验收均已通过。
+
 ## 0.2.0-alpha - 2026-08-25
 
+- 新增普通 UGC、UGC 合集当前项和已有权限内容的视频类型门禁；互动、Story、首映中、仅预览及未知特殊模型在字幕访问前稳定拒绝，inspect API 升级为 1.4.0/schema v2。
 - 新增只监听 `127.0.0.1` 的 FastAPI Local API、版本化 OpenAPI、生成的 TypeScript client，以及 Chrome/Edge 双构建漂移门禁。
 - 新增五分钟单次配对码、扩展 Origin 绑定 Bearer、Host/CORS/Content-Type/schema/正文大小/速率/并发限制。
 - 新增单 worker 持久 job、合法状态转换和服务重启恢复；失败响应使用稳定脱敏分类。

@@ -25,6 +25,36 @@ class VideoPage:
             raise PlatformResponseError("平台返回了无效的分集标识。")
 
 
+class VideoType(Enum):
+    """Stable product-facing video types derived from platform metadata."""
+
+    STANDARD_UGC = "standard_ugc"
+    INTERACTIVE_UGC = "interactive_ugc"
+    STORY_UGC = "story_ugc"
+    UNKNOWN = "unknown"
+
+
+class VideoContainerType(Enum):
+    STANDALONE = "standalone"
+    UGC_SEASON = "ugc_season"
+
+
+class VideoAccessMode(Enum):
+    PUBLIC = "public"
+    ENTITLED = "entitled"
+    PREVIEW = "preview"
+
+
+@dataclass(frozen=True, slots=True)
+class VideoCapabilities:
+    """Platform traits that materially change the supported workflow."""
+
+    video_type: VideoType = VideoType.STANDARD_UGC
+    container_type: VideoContainerType = VideoContainerType.STANDALONE
+    access_mode: VideoAccessMode = VideoAccessMode.PUBLIC
+    premiere: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class VideoMetadata:
     """经过结构校验的视频元数据。"""
@@ -33,6 +63,7 @@ class VideoMetadata:
     bvid: str
     title: str
     pages: tuple[VideoPage, ...]
+    capabilities: VideoCapabilities = VideoCapabilities()
 
     def __post_init__(self) -> None:
         if self.aid <= 0 or _BVID_PATTERN.fullmatch(self.bvid) is None or not self.pages:

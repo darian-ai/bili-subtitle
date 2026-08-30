@@ -1,6 +1,6 @@
 # bili-study
 
-当前源码是已通过阶段九验收的 `0.2.0-alpha` 浏览器学习原型：除字幕提取与阶段八学习后端外，已经提供只监听 loopback 的 Local API，以及由 WXT、TypeScript、React 构建的 Chrome/Edge Manifest V3 侧栏。当前只提供本地安装和加载已解压扩展，不进入扩展商店。
+当前源码是已通过阶段十验收的 `0.2.0` 本地安装视频学习助手 MVP：除字幕提取与学习后端外，提供只监听 loopback 的 Local API，以及由 WXT、TypeScript、React 构建的 Chrome/Edge Manifest V3 侧栏。当前只提供本地安装和加载已解压扩展，不进入扩展商店。
 
 新安装使用 `uv tool install bili-study`，提供 `bili-study extract <视频标识或URL>` 与 `bili-study auth login|status|clear`。原有 `bili-subtitle` 命令继续兼容并复用原 Credential Manager 登录状态。
 
@@ -56,7 +56,7 @@ uv python install 3.12
 
 ```powershell
 uv build
-uv tool install .\dist\bili_study-0.2.0a1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0-py3-none-any.whl
 ```
 
 安装完成后验证命令：
@@ -78,7 +78,7 @@ uv tool update-shell
 ```powershell
 git pull
 uv build
-uv tool install .\dist\bili_study-0.2.0a1-py3-none-any.whl
+uv tool install .\dist\bili_study-0.2.0-py3-none-any.whl
 ```
 
 卸载：
@@ -119,6 +119,12 @@ bili-study library create my-library D:\BiliKnowledge
 bili-study config provider set my-provider https://api.example.com/v1 model-name
 ```
 
+可选地保存输入、输出每百万 token 单价和三位币种代码；两项价格必须同时提供。价格只用于本地 Decimal 估算，不会联网查询价格表，也不代表 Provider 账单：
+
+```powershell
+bili-study config provider set my-provider https://api.example.com/v1 model-name --input-price-per-million 1.00 --output-price-per-million 2.00 --currency CNY
+```
+
 从已经提取的原始字幕 JSON 构造版本化 Transcript。导入只读取本地 JSON，不会再次访问 Bilibili：
 
 ```powershell
@@ -140,7 +146,7 @@ bili-study note add --library my-library REVISION_ID 120000 "这里需要复习"
 bili-study note list --library my-library REVISION_ID
 ```
 
-Embedding、跨视频问答、复习和测验仍不在本原型范围内。
+数字评分、间隔复习、Embedding 和跨视频问答仍不在 MVP 范围内。
 
 ### Chrome/Edge 学习侧栏
 
@@ -168,7 +174,7 @@ Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`，启用�
 - Chrome 选择 `extension\.output\chrome-mv3`。
 - Edge 选择 `extension\.output\edge-mv3`。
 
-点击工具栏中的 bili-study 图标打开侧栏。首次连接时，在另一个 PowerShell 生成五分钟有效、单次使用的配对码：
+在普通 Bilibili 视频标签页点击工具栏中的 bili-study 图标，打开只属于该标签页的侧栏。每个视频标签页首次使用时各点击一次；未点击的标签页和非普通视频页面不显示该侧栏，切回已打开的标签页会恢复其原实例。首次连接时，在另一个 PowerShell 生成五分钟有效、单次使用的配对码：
 
 ```powershell
 bili-study plugin pair
@@ -176,9 +182,32 @@ bili-study plugin pair
 
 把配对码输入侧栏。Bearer token 只保存在扩展本地存储并绑定当前扩展 Origin；本地服务重启后 token 会失效，需要重新配对。扩展不保存或读取 Bilibili Cookie、Provider API Key、二维码密钥或字幕签名 URL。
 
-打开普通 Bilibili 视频页后，依次选择知识库、填写已配置的 Provider 名称、检查字幕轨道，再主动点击“创建轻量学习大纲”。可容纳的字幕只调用一次模型，超预算内容才使用 Map/Reduce；详情和按章练习仍只在点击后生成。侧栏通过“大纲 / 练习 / 笔记”多页面导航展示内容，正文默认为 18px，并随用户拖动后的浏览器侧栏宽度响应，不会自动暂停视频、弹题或上传字幕。
+打开普通 Bilibili 视频页后，侧栏会先按知识库和 BV/P 从本地恢复已有大纲、历史版本、详情、练习、小测作答与反馈、总结、导图和笔记，不要求 Provider，也不访问 Bilibili 或模型。只有本地明确没有记录时，才依次填写 Provider、检查字幕轨道并主动点击“创建轻量学习大纲”；已有记录只有点击独立的“重新生成”才会再次调用模型并创建新版本。可容纳的字幕只调用一次模型，超预算内容才使用 Map/Reduce；详情、按章练习、总结和导图均由用户主动生成。小测提交前不会显示证据回看入口。侧栏支持大纲、完整字幕、练习、笔记与缓存管理，正文默认为 18px，并随侧栏宽度响应；不会自动暂停视频、强制答题或自动上传字幕。
 
 个人时间戳笔记写入知识库的 `notes\`，AI 指南写入 `generated\videos\`；重新生成 AI 内容不会覆盖个人 Markdown。任务、指南和笔记状态保存在本机 SQLite，服务重启后会恢复未完成任务。
+
+### 升级、迁移与回滚
+
+首次打开旧知识库时，服务会在事务内把 SQLite schema 从 v3 前向迁移到 v4，并在同目录先创建 `study.sqlite3.bak`。迁移失败会自动恢复原数据库并返回稳定错误。升级前仍建议停止 `bili-study serve` 并备份 `%LOCALAPPDATA%\bili-study` 与知识库目录。
+
+需要人工回滚时：停止服务，保留失败后的数据库用于排障，把同目录的 `study.sqlite3.bak` 复制回 `study.sqlite3`，再安装原版本 wheel。不要在服务运行时替换数据库。`libraries.json`、Credential Manager 凭据和知识库 Markdown 不属于迁移清理范围。
+
+### 隐私、成本和缓存
+
+- Transcript、任务、缓存和索引保存在 `%LOCALAPPDATA%\bili-study`；知识库 Markdown 保存在用户选择的目录；Bilibili 会话与 Provider Key 只在 Windows Credential Manager。
+- 只有用户确认生成时才把所选 Transcript 的必要 cue 发送给配置的 Provider。总结不读取或上传个人笔记、作答、复述和测验尝试。
+- Provider 未返回完整 usage，或未同时配置输入/输出单价时，界面明确显示“成本未知”；缓存命中显示零请求，不伪造 token 数。
+- “清理孤立缓存”只删除不再引用的请求缓存。按视频或 Provider 删除生成物必须先预览并二次确认；范围变化会拒绝确认。Transcript、字幕、笔记、作答、复述和测验尝试始终受保护。
+
+### Provider 兼容与排障
+
+Provider 必须提供 HTTPS、OpenAI-compatible `/chat/completions`、非流式 JSON object 响应，并接受 `response_format={"type":"json_object"}`。不返回 usage 的 Provider仍可使用，但无法估算成本。认证、配额、超时、网络和结构错误会使用不同的稳定分类。
+
+- “连接已失效”：确认 `bili-study serve --port 8765` 仍运行，点击“重新连接”；服务重启后如 token 失效，重新运行 `bili-study plugin pair`。
+- “字幕轨道已变化”：重新点击“检查字幕”并重新选择轨道，不会按语言或名称静默回退。
+- “正在确认当前视频分集”：等待 URL 与选集 DOM 稳定；若长期不恢复，刷新视频页和扩展后重试。
+- `authentication`：重新保存 Provider Key；`quota`：等待限额恢复；`timeout/network`：检查 Provider 地址和网络；`structure/evidence_validation`：更换支持严格 JSON 的模型或显式重试。
+- 扩展重载后出现旧面板异常时，关闭旧侧栏并在视频标签页重新点击扩展；旧 content script 会停止 observer、定时器和 runtime listener。
 
 开发环境首次执行 Playwright 需要下载隔离测试浏览器：
 
@@ -241,6 +270,17 @@ bili-subtitle <视频标识或 URL> [--page N | --all-pages] [--lang 语言代�
 | 视频页 URL | `https://www.bilibili.com/video/BV1xx411c7mD` | 支持 `bilibili.com`、`www.bilibili.com` 和 `m.bilibili.com` 的普通视频页 |
 | 带分集的 URL | `https://www.bilibili.com/video/BV1xx411c7mD?p=2` | 默认只处理 URL 指定的 P2 |
 | 短链 | `https://b23.tv/xxxxxxx` | 必须最终跳转到受支持的 Bilibili 视频页 |
+
+视频类型按平台元数据而不是 URL 外观判断：
+
+| 类型 | 支持状态 |
+|---|---|
+| 普通 UGC 单 P、同 BV 多 P | 支持 |
+| UGC 合集/系列 | 只处理当前 BV/P，不展开整个合集 |
+| 当前账号已有合法权限的充电或受限 UGC | 条件支持；完整视频和字幕必须正常可见 |
+| 无站内字幕的普通 UGC | 可识别，但以“无字幕”结束 |
+| 互动视频、Story/特殊竖屏播放器、首映中、仅预览 | 不支持 |
+| 番剧/影视、课堂、直播、活动嵌入页、收藏夹及列表页 | 不支持 |
 
 分集选择规则：
 
@@ -400,9 +440,9 @@ Get-ChildItem .\subtitles
 
 ## 支持范围和限制
 
-当前 V1 支持普通 UGC 投稿及当前账号通过正常网页流程可见的人工/AI 字幕，不支持：
+当前 V1 支持普通 UGC 投稿、UGC 合集中的当前投稿，以及当前账号通过正常网页流程可见的人工/AI 字幕。已有权限的受限 UGC 仅在完整视频和字幕接口均正常可用时条件支持。不支持：
 
-- 番剧、影视、课程和互动视频。
+- 番剧、影视、课程、直播、互动视频、Story/特殊竖屏播放器、首映中和仅预览内容。
 - 收藏夹、UP 主空间、跨投稿合集和批量 URL。
 - 视频、音频、封面或弹幕下载。
 - ASR、OCR、翻译、润色、繁简转换和双语合并。
@@ -435,7 +475,7 @@ uv run ruff format --check .
 uv run pyright
 uv build
 uv run python scripts/verify_release.py dist --rebuild-sdist
-.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0a1-py3-none-any.whl
+.\scripts\verify_isolated_install.ps1 -Wheel .\dist\bili_study-0.2.0-py3-none-any.whl
 ```
 
 扩展门禁在 `extension` 目录运行：

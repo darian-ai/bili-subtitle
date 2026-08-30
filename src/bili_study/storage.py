@@ -134,7 +134,7 @@ class LibraryRegistry:
 
 
 class StudyRepository:
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(self, database: Path) -> None:
         self.database = database
@@ -201,7 +201,8 @@ class StudyRepository:
                         job_id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
                         request TEXT NOT NULL, result TEXT, error_code TEXT,
                         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                        progress TEXT
+                        progress TEXT, retry_of TEXT,
+                        FOREIGN KEY(retry_of) REFERENCES api_jobs(job_id)
                     );
                     CREATE TABLE IF NOT EXISTS chapter_details (
                         guide_id TEXT NOT NULL, chapter_id TEXT NOT NULL, payload TEXT NOT NULL,
@@ -218,23 +219,145 @@ class StudyRepository:
                         question_id TEXT NOT NULL, payload TEXT NOT NULL,
                         FOREIGN KEY(revision_id) REFERENCES transcripts(revision_id)
                     );
+                    CREATE TABLE IF NOT EXISTS transcript_sources (
+                        revision_id TEXT PRIMARY KEY, bvid TEXT NOT NULL, page INTEGER NOT NULL,
+                        cid INTEGER NOT NULL, created_at TEXT NOT NULL,
+                        FOREIGN KEY(revision_id) REFERENCES transcripts(revision_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS guide_metadata (
+                        guide_id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+                        provider TEXT, model TEXT,
+                        FOREIGN KEY(guide_id) REFERENCES guides(guide_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS cache_metadata (
+                        fingerprint TEXT PRIMARY KEY, created_at TEXT NOT NULL,
+                        FOREIGN KEY(fingerprint) REFERENCES cache(fingerprint)
+                    );
+                    CREATE TABLE IF NOT EXISTS quiz_attempts (
+                        attempt_id TEXT PRIMARY KEY, guide_id TEXT NOT NULL,
+                        revision_id TEXT NOT NULL, question_id TEXT NOT NULL,
+                        submitted_at TEXT NOT NULL, payload TEXT NOT NULL,
+                        FOREIGN KEY(revision_id) REFERENCES transcripts(revision_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS study_summaries (
+                        summary_id TEXT PRIMARY KEY, guide_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL, payload TEXT NOT NULL,
+                        FOREIGN KEY(guide_id) REFERENCES guides(guide_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS mindmaps (
+                        mindmap_id TEXT PRIMARY KEY, guide_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL, payload TEXT NOT NULL,
+                        FOREIGN KEY(guide_id) REFERENCES guides(guide_id)
+                    );
                     """
                 )
                 columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(api_jobs)")}
                 if "progress" not in columns:
                     connection.execute("ALTER TABLE api_jobs ADD COLUMN progress TEXT")
-                connection.execute("PRAGMA user_version = 3")
+                if "retry_of" not in columns:
+                    connection.execute("ALTER TABLE api_jobs ADD COLUMN retry_of TEXT")
+                self._backfill_v4(connection)
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS transcript_video_versions "
+                    "ON transcript_sources(bvid, page, created_at DESC)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS guide_revision_versions ON guides(revision_id)"
+                )
+                connection.execute("PRAGMA user_version = 4")
         except (sqlite3.Error, StorageError) as exc:
             if backup.exists():
                 shutil.copy2(backup, self.database)
             raise StorageError("学习数据库 migration 失败。") from exc
 
+    @staticmethod
+    def _backfill_v4(connection: sqlite3.Connection) -> None:
+        """Backfill queryable v4 source/version metadata from immutable v3 payloads."""
+        for row in connection.execute("SELECT revision_id, payload FROM transcripts").fetchall():
+            payload = json.loads(str(row["payload"]))
+            connection.execute(
+                "INSERT OR IGNORE INTO transcript_sources "
+                "(revision_id, bvid, page, cid, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(row["revision_id"]),
+                    str(payload.get("bvid", "")),
+                    int(payload.get("page", 0)),
+                    int(payload.get("cid", 0)),
+                    str(payload.get("created_at", "")),
+                ),
+            )
+        for row in connection.execute("SELECT guide_id, payload FROM guides").fetchall():
+            payload = json.loads(str(row["payload"]))
+            connection.execute(
+                "INSERT OR IGNORE INTO guide_metadata "
+                "(guide_id, created_at, provider, model) VALUES (?, ?, ?, ?)",
+                (
+                    str(row["guide_id"]),
+                    str(payload.get("created_at", "")),
+                    str(payload["provider"]) if payload.get("provider") is not None else None,
+                    str(payload["model"]) if payload.get("model") is not None else None,
+                ),
+            )
+        connection.execute(
+            "INSERT OR IGNORE INTO cache_metadata(fingerprint, created_at) "
+            "SELECT fingerprint, '' FROM cache"
+        )
+        for row in connection.execute("SELECT payload FROM reflections").fetchall():
+            payload = json.loads(str(row["payload"]))
+            attempt_id = str(payload.get("reflection_id", ""))
+            guide_id = str(payload.get("guide_id", ""))
+            revision_id = str(payload.get("revision_id", ""))
+            question_id = str(payload.get("question_id", ""))
+            if attempt_id and guide_id and revision_id and question_id:
+                connection.execute(
+                    "INSERT OR IGNORE INTO quiz_attempts VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        attempt_id,
+                        guide_id,
+                        revision_id,
+                        question_id,
+                        str(payload.get("submitted_at", payload.get("created_at", ""))),
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    ),
+                )
+
     def save_transcript(self, transcript: TranscriptRevision) -> None:
         with self.connect() as connection:
-            connection.execute(
-                "INSERT OR IGNORE INTO transcripts VALUES (?, ?, ?)",
-                (transcript.revision_id, transcript.content_sha256, to_json(transcript)),
+            existing = connection.execute(
+                "SELECT payload FROM transcripts WHERE revision_id = ?", (transcript.revision_id,)
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO transcripts VALUES (?, ?, ?)",
+                    (transcript.revision_id, transcript.content_sha256, to_json(transcript)),
+                )
+                connection.execute(
+                    "INSERT INTO transcript_sources VALUES (?, ?, ?, ?, ?)",
+                    (
+                        transcript.revision_id,
+                        transcript.bvid,
+                        transcript.page,
+                        transcript.cid,
+                        transcript.created_at,
+                    ),
+                )
+                return
+            saved = transcript_from_dict(json.loads(str(existing["payload"])))
+            same_source = (
+                saved.bvid == transcript.bvid
+                and saved.page == transcript.page
+                and saved.cid == transcript.cid
+                and saved.content_sha256 == transcript.content_sha256
             )
+            if (
+                same_source
+                and saved.source_verification == "legacy_unverified"
+                and transcript.source_verification == "verified"
+            ):
+                connection.execute(
+                    "UPDATE transcripts SET content_hash = ?, payload = ? WHERE revision_id = ?",
+                    (transcript.content_sha256, to_json(transcript), transcript.revision_id),
+                )
 
     def get_transcript(self, revision_id: str) -> TranscriptRevision:
         with self.connect() as connection:
@@ -254,6 +377,17 @@ class StudyRepository:
             raise StorageError("知识库中没有 Transcript。")
         return transcript_from_dict(json.loads(str(row["payload"])))
 
+    def latest_transcript_for_video(self, bvid: str, page: int) -> TranscriptRevision | None:
+        """Return the newest locally saved revision for exactly one canonical BV/P."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT transcripts.payload FROM transcripts JOIN transcript_sources USING "
+                "(revision_id) WHERE bvid = ? AND page = ? "
+                "ORDER BY created_at DESC, transcripts.rowid DESC LIMIT 1",
+                (bvid, page),
+            ).fetchone()
+        return transcript_from_dict(json.loads(str(row["payload"]))) if row else None
+
     def cache_get(self, fingerprint: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
@@ -264,9 +398,231 @@ class StudyRepository:
     def cache_put(self, fingerprint: str, kind: str, payload: dict[str, Any]) -> None:
         with self.connect() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO cache VALUES (?, ?, ?)",
+                "INSERT INTO cache VALUES (?, ?, ?) ON CONFLICT(fingerprint) DO UPDATE SET "
+                "kind = excluded.kind, payload = excluded.payload",
                 (fingerprint, kind, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
             )
+            connection.execute(
+                "INSERT OR REPLACE INTO cache_metadata VALUES (?, ?)",
+                (fingerprint, str(payload.get("created_at", ""))),
+            )
+
+    def cache_inventory(self) -> dict[str, int]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS items, COALESCE(SUM(LENGTH(CAST(payload AS BLOB))), 0) "
+                "AS bytes FROM cache"
+            ).fetchone()
+            rebuildable = connection.execute(
+                "SELECT (SELECT COUNT(*) FROM guides) + "
+                "(SELECT COUNT(*) FROM study_summaries) + (SELECT COUNT(*) FROM mindmaps), "
+                "(SELECT COALESCE(SUM(LENGTH(CAST(payload AS BLOB))), 0) FROM guides) + "
+                "(SELECT COALESCE(SUM(LENGTH(CAST(payload AS BLOB))), 0) FROM study_summaries) + "
+                "(SELECT COALESCE(SUM(LENGTH(CAST(payload AS BLOB))), 0) FROM mindmaps)"
+            ).fetchone()
+        assert row is not None and rebuildable is not None
+        return {
+            "request_cache_items": int(row["items"]),
+            "request_cache_bytes": int(row["bytes"]),
+            "rebuildable_generation_items": int(rebuildable[0]),
+            "rebuildable_generation_bytes": int(rebuildable[1]),
+        }
+
+    def prune_cache(self) -> dict[str, int]:
+        """Delete request-cache rows no longer referenced by any saved generation."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT fingerprint, LENGTH(CAST(payload AS BLOB)) AS bytes FROM cache "
+                "WHERE fingerprint NOT IN (SELECT fingerprint FROM guides)"
+            ).fetchall()
+            fingerprints = tuple(str(row["fingerprint"]) for row in rows)
+            if fingerprints:
+                placeholders = ",".join("?" for _ in fingerprints)
+                connection.execute(
+                    f"DELETE FROM cache_metadata WHERE fingerprint IN ({placeholders})",
+                    fingerprints,
+                )
+                connection.execute(
+                    f"DELETE FROM cache WHERE fingerprint IN ({placeholders})", fingerprints
+                )
+        return {
+            "deleted_items": len(fingerprints),
+            "reclaimed_bytes": sum(int(row["bytes"] or 0) for row in rows),
+        }
+
+    def generated_candidates(
+        self, *, bvid: str | None = None, page: int | None = None, provider: str | None = None
+    ) -> tuple[dict[str, Any], ...]:
+        if (bvid is None) != (page is None) or (bvid is None) == (provider is None):
+            raise StorageError("缓存清理范围必须是一个 BV/P 或一个 Provider。")
+        where = "s.bvid = ? AND s.page = ?" if bvid is not None else "m.provider = ?"
+        parameters: tuple[object, ...] = (bvid, page) if bvid is not None else (provider,)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT g.guide_id, g.fingerprint,
+                           LENGTH(CAST(g.payload AS BLOB)) +
+                           COALESCE((SELECT SUM(LENGTH(CAST(ss.payload AS BLOB)))
+                                     FROM study_summaries AS ss
+                                     WHERE ss.guide_id = g.guide_id), 0) +
+                           COALESCE((SELECT SUM(LENGTH(CAST(mm.payload AS BLOB)))
+                                     FROM mindmaps AS mm
+                                     WHERE mm.guide_id = g.guide_id), 0) AS bytes
+                    FROM guides AS g JOIN guide_metadata AS m USING (guide_id)
+                    JOIN transcript_sources AS s USING (revision_id)
+                    WHERE {where} ORDER BY g.guide_id""",
+                parameters,
+            ).fetchall()
+        return tuple(
+            {
+                "guide_id": str(row["guide_id"]),
+                "fingerprint": str(row["fingerprint"]),
+                "bytes": int(row["bytes"] or 0),
+                "artifact_ids": (
+                    str(row["guide_id"]),
+                    *(
+                        str(item["summary_id"])
+                        for item in self._artifact_rows(
+                            "study_summaries", "summary_id", str(row["guide_id"])
+                        )
+                    ),
+                    *(
+                        str(item["mindmap_id"])
+                        for item in self._artifact_rows(
+                            "mindmaps", "mindmap_id", str(row["guide_id"])
+                        )
+                    ),
+                ),
+            }
+            for row in rows
+        )
+
+    def _artifact_rows(self, table: str, id_column: str, guide_id: str) -> tuple[sqlite3.Row, ...]:
+        if (table, id_column) not in {
+            ("study_summaries", "summary_id"),
+            ("mindmaps", "mindmap_id"),
+        }:
+            raise StorageError("生成物类型无效。")
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {id_column} FROM {table} WHERE guide_id = ? ORDER BY rowid",
+                (guide_id,),
+            ).fetchall()
+        return tuple(rows)
+
+    def clear_generated(self, guide_ids: tuple[str, ...]) -> tuple[str, ...]:
+        """Clear rebuildable generations while preserving every source and user-owned row."""
+        if not guide_ids:
+            return ()
+        placeholders = ",".join("?" for _ in guide_ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT guide_id, fingerprint FROM guides WHERE guide_id IN ({placeholders})",
+                guide_ids,
+            ).fetchall()
+            if len(rows) != len(set(guide_ids)):
+                raise StorageError("缓存清理范围已变化，请重新预览。")
+            fingerprints = tuple(str(row["fingerprint"]) for row in rows)
+            connection.execute(
+                f"DELETE FROM chapter_details WHERE guide_id IN ({placeholders})", guide_ids
+            )
+            connection.execute(
+                f"DELETE FROM chapter_practices WHERE guide_id IN ({placeholders})", guide_ids
+            )
+            connection.execute(
+                f"DELETE FROM study_summaries WHERE guide_id IN ({placeholders})", guide_ids
+            )
+            connection.execute(
+                f"DELETE FROM mindmaps WHERE guide_id IN ({placeholders})", guide_ids
+            )
+            connection.execute(
+                f"DELETE FROM guide_metadata WHERE guide_id IN ({placeholders})", guide_ids
+            )
+            connection.execute(f"DELETE FROM guides WHERE guide_id IN ({placeholders})", guide_ids)
+            cache_placeholders = ",".join("?" for _ in fingerprints)
+            connection.execute(
+                f"DELETE FROM cache_metadata WHERE fingerprint IN ({cache_placeholders})",
+                fingerprints,
+            )
+            connection.execute(
+                f"DELETE FROM cache WHERE fingerprint IN ({cache_placeholders})", fingerprints
+            )
+        return tuple(str(row["guide_id"]) for row in rows)
+
+    def save_quiz_attempt(
+        self,
+        attempt_id: str,
+        guide_id: str,
+        revision_id: str,
+        question_id: str,
+        submitted_at: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO quiz_attempts VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    guide_id,
+                    revision_id,
+                    question_id,
+                    submitted_at,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+    def quiz_attempts(self, guide_id: str) -> tuple[dict[str, Any], ...]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM quiz_attempts WHERE guide_id = ? ORDER BY submitted_at, rowid",
+                (guide_id,),
+            ).fetchall()
+        return tuple(json.loads(str(row["payload"])) for row in rows)
+
+    def save_summary(
+        self, summary_id: str, guide_id: str, created_at: str, payload: dict[str, Any]
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO study_summaries VALUES (?, ?, ?, ?)",
+                (
+                    summary_id,
+                    guide_id,
+                    created_at,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+    def summaries(self, guide_id: str) -> tuple[dict[str, Any], ...]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM study_summaries WHERE guide_id = ? "
+                "ORDER BY created_at DESC, rowid DESC",
+                (guide_id,),
+            ).fetchall()
+        return tuple(json.loads(str(row["payload"])) for row in rows)
+
+    def save_mindmap(
+        self, mindmap_id: str, guide_id: str, created_at: str, payload: dict[str, Any]
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO mindmaps VALUES (?, ?, ?, ?)",
+                (
+                    mindmap_id,
+                    guide_id,
+                    created_at,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
+    def mindmaps(self, guide_id: str) -> tuple[dict[str, Any], ...]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM mindmaps WHERE guide_id = ? "
+                "ORDER BY created_at DESC, rowid DESC",
+                (guide_id,),
+            ).fetchall()
+        return tuple(json.loads(str(row["payload"])) for row in rows)
 
     def start_task(self, kind: str, timestamp: str) -> str:
         task_id = str(uuid4())
@@ -310,6 +666,40 @@ class StudyRepository:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                 ),
             )
+            connection.execute(
+                "INSERT INTO guide_metadata VALUES (?, ?, ?, ?)",
+                (
+                    guide.guide_id,
+                    guide.created_at,
+                    str(payload["provider"]) if payload.get("provider") is not None else None,
+                    str(payload["model"]) if payload.get("model") is not None else None,
+                ),
+            )
+
+    def guide_versions_for_video(self, bvid: str, page: int) -> tuple[dict[str, Any], ...]:
+        """List all saved guide versions newest-first using the normalized source index."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT g.guide_id, g.revision_id, m.created_at, m.provider, m.model,
+                          t.payload AS transcript_payload
+                   FROM guides AS g JOIN guide_metadata AS m USING (guide_id)
+                   JOIN transcripts AS t USING (revision_id)
+                   JOIN transcript_sources AS s USING (revision_id)
+                   WHERE s.bvid = ? AND s.page = ?
+                   ORDER BY m.created_at DESC, g.rowid DESC""",
+                (bvid, page),
+            ).fetchall()
+        return tuple(
+            {
+                "guide_id": str(row["guide_id"]),
+                "revision_id": str(row["revision_id"]),
+                "created_at": str(row["created_at"] or ""),
+                "provider": str(row["provider"]) if row["provider"] is not None else None,
+                "model": str(row["model"]) if row["model"] is not None else None,
+                "track_id": json.loads(str(row["transcript_payload"])).get("track_id"),
+            }
+            for row in rows
+        )
 
     def guide_payload(self, guide_id: str) -> dict[str, Any]:
         with self.connect() as connection:
@@ -319,6 +709,27 @@ class StudyRepository:
         if row is None:
             raise StorageError("学习指南不存在。")
         return json.loads(str(row["payload"]))
+
+    def latest_guide_for_video(self, bvid: str, page: int) -> dict[str, Any] | None:
+        """Return the newest guide for a video page without making a model request."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT guides.payload AS guide_payload FROM guides
+                   JOIN guide_metadata USING (guide_id)
+                   JOIN transcript_sources USING (revision_id)
+                   WHERE transcript_sources.bvid = ? AND transcript_sources.page = ?
+                   ORDER BY guide_metadata.created_at DESC, guides.rowid DESC LIMIT 1""",
+                (bvid, page),
+            ).fetchone()
+        return json.loads(str(row["guide_payload"])) if row else None
+
+    def latest_guide_for_revision(self, revision_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM guides WHERE revision_id = ? ORDER BY rowid DESC LIMIT 1",
+                (revision_id,),
+            ).fetchone()
+        return json.loads(str(row["payload"])) if row is not None else None
 
     def save_note(self, note: PersonalNote) -> None:
         with self.connect() as connection:
@@ -334,14 +745,21 @@ class StudyRepository:
             ).fetchall()
         return tuple(PersonalNote(**json.loads(str(row["payload"]))) for row in rows)
 
-    def create_job(self, kind: str, request: dict[str, Any], timestamp: str) -> str:
+    def create_job(
+        self,
+        kind: str,
+        request: dict[str, Any],
+        timestamp: str,
+        *,
+        retry_of: str | None = None,
+    ) -> str:
         job_id = str(uuid4())
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO api_jobs "
                 "(job_id, kind, status, request, result, error_code, "
-                "created_at, updated_at, progress) "
-                "VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?, ?)",
+                "created_at, updated_at, progress, retry_of) "
+                "VALUES (?, ?, 'queued', ?, NULL, NULL, ?, ?, ?, ?)",
                 (
                     job_id,
                     kind,
@@ -349,6 +767,7 @@ class StudyRepository:
                     timestamp,
                     timestamp,
                     json.dumps({"phase": "queued", "percent": 0}),
+                    retry_of,
                 ),
             )
         return job_id
@@ -389,28 +808,42 @@ class StudyRepository:
         error_code: str | None,
         timestamp: str,
     ) -> None:
-        if status not in {"succeeded", "failed", "interrupted"}:
+        if status not in {"succeeded", "failed", "interrupted", "cancelled"}:
             raise StorageError("API 任务终态无效。")
         payload = json.dumps(result, ensure_ascii=False, sort_keys=True) if result else None
         with self.connect() as connection:
+            allowed_status = (
+                "('running', 'cancel_requested')" if status == "cancelled" else "('running')"
+            )
+            phase = {
+                "succeeded": "completed",
+                "cancelled": "cancelled",
+                "interrupted": "interrupted",
+                "failed": "failed",
+            }[status]
             cursor = connection.execute(
                 "UPDATE api_jobs SET status = ?, result = ?, error_code = ?, updated_at = ?, "
                 "progress = ? "
-                "WHERE job_id = ? AND status = 'running'",
+                f"WHERE job_id = ? AND status IN {allowed_status}",
                 (
                     status,
                     payload,
                     error_code,
                     timestamp,
-                    json.dumps(
-                        {
-                            "phase": "completed" if status == "succeeded" else "failed",
-                            "percent": 100,
-                        }
-                    ),
+                    json.dumps({"phase": phase, "percent": 100}),
                     job_id,
                 ),
             )
+            if cursor.rowcount == 0 and status != "cancelled":
+                cursor = connection.execute(
+                    "UPDATE api_jobs SET status = 'cancelled', result = NULL, error_code = NULL, "
+                    "updated_at = ?, progress = ? WHERE job_id = ? AND status = 'cancel_requested'",
+                    (
+                        timestamp,
+                        json.dumps({"phase": "cancelled", "percent": 100}),
+                        job_id,
+                    ),
+                )
         if cursor.rowcount != 1:
             raise StorageError("API 任务状态转换无效。")
 
@@ -431,15 +864,55 @@ class StudyRepository:
             "progress": json.loads(str(row["progress"])) if row["progress"] else None,
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
+            "retry_of": str(row["retry_of"]) if row["retry_of"] else None,
         }
 
+    def cancel_job(self, job_id: str, timestamp: str) -> str:
+        """Request cancellation atomically and return the resulting status."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM api_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise StorageError("API 任务不存在。")
+            current = str(row["status"])
+            if current == "queued":
+                resulting = "cancelled"
+                phase = "cancelled"
+            elif current == "running":
+                resulting = "cancel_requested"
+                phase = "cancel_requested"
+            elif current in {"cancel_requested", "cancelled"}:
+                return current
+            else:
+                return current
+            connection.execute(
+                "UPDATE api_jobs SET status = ?, updated_at = ?, progress = ? WHERE job_id = ?",
+                (
+                    resulting,
+                    timestamp,
+                    json.dumps(
+                        {"phase": phase, "percent": 100 if resulting == "cancelled" else 99}
+                    ),
+                    job_id,
+                ),
+            )
+        return resulting
+
+    def retry_job(self, job_id: str, timestamp: str) -> tuple[str, str, dict[str, Any]] | None:
+        """Return the immutable request for retryable terminal work."""
+        record = self.job(job_id)
+        if record["status"] not in {"failed", "interrupted", "cancelled"}:
+            return None
+        return str(record["kind"]), job_id, dict(record["request"])
+
     def recover_jobs(self, timestamp: str) -> tuple[str, ...]:
-        """Move interrupted work back to the serial queue after service restart."""
+        """Resume unstarted work, but never replay an in-flight billable request."""
         with self.connect() as connection:
             connection.execute(
-                "UPDATE api_jobs SET status = 'queued', error_code = 'service_restarted', "
-                "updated_at = ?, progress = ? WHERE status = 'running'",
-                (timestamp, json.dumps({"phase": "queued", "percent": 0})),
+                "UPDATE api_jobs SET status = 'interrupted', error_code = 'service_restarted', "
+                "updated_at = ?, progress = ? WHERE status IN ('running', 'cancel_requested')",
+                (timestamp, json.dumps({"phase": "interrupted", "percent": 100})),
             )
             rows = connection.execute(
                 "SELECT job_id FROM api_jobs WHERE status = 'queued' ORDER BY rowid"
@@ -482,7 +955,7 @@ class StudyRepository:
     ) -> None:
         with self.connect() as connection:
             connection.execute(
-                "INSERT INTO reflections VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO reflections VALUES (?, ?, ?, ?)",
                 (
                     reflection_id,
                     revision_id,
@@ -490,6 +963,14 @@ class StudyRepository:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True),
                 ),
             )
+
+    def reflections(self, revision_id: str) -> tuple[dict[str, Any], ...]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM reflections WHERE revision_id = ? ORDER BY rowid",
+                (revision_id,),
+            ).fetchall()
+        return tuple(json.loads(str(row["payload"])) for row in rows)
 
 
 def library_database(paths: AppPaths, library: Library) -> Path:

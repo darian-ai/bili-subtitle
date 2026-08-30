@@ -10,8 +10,21 @@ from bili_subtitle.application.input_parser import (
     VideoReference,
     parse_video_input,
 )
-from bili_subtitle.domain.errors import InputError, InvalidPageError, RedirectError
-from bili_subtitle.domain.models import PageSelection, SelectionSource, VideoMetadata
+from bili_subtitle.domain.errors import (
+    AccessDeniedError,
+    InputError,
+    InvalidPageError,
+    RedirectError,
+    UnsupportedVideoType,
+    VideoNotReadyError,
+)
+from bili_subtitle.domain.models import (
+    PageSelection,
+    SelectionSource,
+    VideoAccessMode,
+    VideoMetadata,
+    VideoType,
+)
 
 _OVERRIDE_NOTICE = "提示：显式分集选项已覆盖视频 URL 中的 p 参数。"
 
@@ -55,6 +68,7 @@ def resolve_parsed_selection(
             raise RedirectError("短链没有解析到受支持的 Bilibili 视频页。")
 
     video = metadata.fetch_video(parsed)
+    _ensure_supported_video(video)
     notices = (
         (_OVERRIDE_NOTICE,)
         if parsed.url_page is not None and (page is not None or all_pages)
@@ -74,3 +88,13 @@ def resolve_parsed_selection(
             raise InvalidPageError(f"投稿中不存在第 {parsed.url_page} 分集。")
         return PageSelection(video, selected, SelectionSource.URL_PAGE)
     return PageSelection(video, video.pages, SelectionSource.DEFAULT_ALL)
+
+
+def _ensure_supported_video(video: VideoMetadata) -> None:
+    capabilities = video.capabilities
+    if capabilities.video_type is not VideoType.STANDARD_UGC:
+        raise UnsupportedVideoType("当前仅支持普通 UGC 视频，不支持互动或特殊播放器视频。")
+    if capabilities.premiere:
+        raise VideoNotReadyError("首映状态的视频暂不支持，请在首映结束后重试。")
+    if capabilities.access_mode is VideoAccessMode.PREVIEW:
+        raise AccessDeniedError("当前仅能访问视频预览，无法读取完整字幕。")

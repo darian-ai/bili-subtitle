@@ -21,6 +21,14 @@ class AccessDeniedError(MetadataError):
     """平台拒绝当前访问。"""
 
 
+class UnsupportedVideoType(MetadataError):
+    """视频使用当前版本不支持的内容或播放器模型。"""
+
+
+class VideoNotReadyError(MetadataError):
+    """视频尚未进入普通投稿的稳定可处理状态。"""
+
+
 class NetworkError(MetadataError):
     """访问平台时发生网络错误。"""
 

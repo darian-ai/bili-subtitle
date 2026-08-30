@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
@@ -60,6 +61,47 @@ def test_provider_config_is_non_secret_and_validated(tmp_path: Path) -> None:
     )
     with pytest.raises(ProviderError, match="字段无效"):
         store.get("test")
+
+
+def test_provider_prices_are_decimal_optional_and_backward_compatible(tmp_path: Path) -> None:
+    store = ProviderConfigStore(AppPaths(tmp_path, tmp_path / "state"))
+    priced = ProviderConfig(
+        "priced",
+        "https://example.com/v1",
+        "model",
+        input_price_per_million=Decimal("0.125"),
+        output_price_per_million=Decimal("1.75"),
+        currency="CNY",
+    )
+    store.set(priced)
+    assert store.get("priced") == priced
+    raw = json.loads(store.path.read_text(encoding="utf-8"))
+    assert raw["priced"]["input_price_per_million"] == "0.125"
+    with pytest.raises(ProviderError, match="同时"):
+        ProviderConfig(
+            "bad",
+            "https://example.com/v1",
+            "model",
+            input_price_per_million=Decimal("1"),
+        )
+    with pytest.raises(ProviderError, match="负数"):
+        ProviderConfig(
+            "bad",
+            "https://example.com/v1",
+            "model",
+            input_price_per_million=Decimal("-1"),
+            output_price_per_million=Decimal("1"),
+            currency="USD",
+        )
+    with pytest.raises(ProviderError, match="三位大写"):
+        ProviderConfig(
+            "bad",
+            "https://example.com/v1",
+            "model",
+            input_price_per_million=Decimal("1"),
+            output_price_per_million=Decimal("1"),
+            currency="usd",
+        )
 
 
 def test_provider_secret_uses_separate_slot(monkeypatch: pytest.MonkeyPatch) -> None:

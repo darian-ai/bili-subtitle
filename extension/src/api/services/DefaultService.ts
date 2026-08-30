@@ -2,20 +2,92 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CacheClearRequest } from '../models/CacheClearRequest';
+import type { CacheClearResponse } from '../models/CacheClearResponse';
+import type { CacheInventoryResponse } from '../models/CacheInventoryResponse';
 import type { ChapterDetailRequest } from '../models/ChapterDetailRequest';
 import type { ChapterPracticeRequest } from '../models/ChapterPracticeRequest';
+import type { GeneratedStudyRequest } from '../models/GeneratedStudyRequest';
 import type { JobAccepted } from '../models/JobAccepted';
 import type { JobResponse } from '../models/JobResponse';
+import type { LibraryRequest } from '../models/LibraryRequest';
 import type { NoteRequest } from '../models/NoteRequest';
 import type { PairRequest } from '../models/PairRequest';
 import type { PairResponse } from '../models/PairResponse';
+import type { QuizAttemptRequest } from '../models/QuizAttemptRequest';
+import type { QuizAttemptResponse } from '../models/QuizAttemptResponse';
 import type { ReflectionRequest } from '../models/ReflectionRequest';
 import type { SourceRequest } from '../models/SourceRequest';
+import type { StudyWorkspaceResponse } from '../models/StudyWorkspaceResponse';
+import type { TranscriptPrepareRequest } from '../models/TranscriptPrepareRequest';
+import type { TranscriptResponse } from '../models/TranscriptResponse';
 import type { VideoInspectRequest } from '../models/VideoInspectRequest';
+import type { VideoWorkspaceLookup } from '../models/VideoWorkspaceLookup';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class DefaultService {
+    /**
+     *  Cache Inventory
+     * @returns CacheInventoryResponse Successful Response
+     * @throws ApiError
+     */
+    public static getCacheInventory({
+        library,
+    }: {
+        library: string,
+    }): CancelablePromise<CacheInventoryResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/cache',
+            query: {
+                'library': library,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Clear Cache
+     * @returns CacheClearResponse Successful Response
+     * @throws ApiError
+     */
+    public static clearCache({
+        requestBody,
+    }: {
+        requestBody: CacheClearRequest,
+    }): CancelablePromise<CacheClearResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/cache/clear',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Prune Cache
+     * @returns number Successful Response
+     * @throws ApiError
+     */
+    public static pruneCache({
+        requestBody,
+    }: {
+        requestBody: LibraryRequest,
+    }): CancelablePromise<Record<string, number>> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/cache/prune',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
     /**
      *  Health
      * @returns string Successful Response
@@ -40,6 +112,48 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/jobs/{job_id}',
+            path: {
+                'job_id': jobId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Cancel Job
+     * @returns JobResponse Successful Response
+     * @throws ApiError
+     */
+    public static cancelJob({
+        jobId,
+    }: {
+        jobId: string,
+    }): CancelablePromise<JobResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/jobs/{job_id}/cancel',
+            path: {
+                'job_id': jobId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Retry Job
+     * @returns JobAccepted Successful Response
+     * @throws ApiError
+     */
+    public static retryJob({
+        jobId,
+    }: {
+        jobId: string,
+    }): CancelablePromise<JobAccepted> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/jobs/{job_id}/retry',
             path: {
                 'job_id': jobId,
             },
@@ -92,6 +206,26 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/pair',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Create Quiz Attempt
+     * @returns JobAccepted Successful Response
+     * @throws ApiError
+     */
+    public static createQuizAttempt({
+        requestBody,
+    }: {
+        requestBody: QuizAttemptRequest,
+    }): CancelablePromise<JobAccepted> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/quiz-attempts',
             body: requestBody,
             mediaType: 'application/json',
             errors: {
@@ -248,6 +382,134 @@ export class DefaultService {
         });
     }
     /**
+     *  Create Mindmap
+     * @returns JobAccepted Successful Response
+     * @throws ApiError
+     */
+    public static createMindMap({
+        guideId,
+        requestBody,
+    }: {
+        guideId: string,
+        requestBody: GeneratedStudyRequest,
+    }): CancelablePromise<JobAccepted> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/study-guides/{guide_id}/mindmap',
+            path: {
+                'guide_id': guideId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  List Quiz Attempts
+     * @returns QuizAttemptResponse Successful Response
+     * @throws ApiError
+     */
+    public static listQuizAttempts({
+        guideId,
+        library,
+    }: {
+        guideId: string,
+        library: string,
+    }): CancelablePromise<Array<QuizAttemptResponse>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/study-guides/{guide_id}/quiz-attempts',
+            path: {
+                'guide_id': guideId,
+            },
+            query: {
+                'library': library,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Create Summary
+     * @returns JobAccepted Successful Response
+     * @throws ApiError
+     */
+    public static createStudySummary({
+        guideId,
+        requestBody,
+    }: {
+        guideId: string,
+        requestBody: GeneratedStudyRequest,
+    }): CancelablePromise<JobAccepted> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/study-guides/{guide_id}/summary',
+            path: {
+                'guide_id': guideId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Get Study Guide Workspace
+     * @returns StudyWorkspaceResponse Successful Response
+     * @throws ApiError
+     */
+    public static getStudyGuideWorkspace({
+        guideId,
+        library,
+    }: {
+        guideId: string,
+        library: string,
+    }): CancelablePromise<StudyWorkspaceResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/study-guides/{guide_id}/workspace',
+            path: {
+                'guide_id': guideId,
+            },
+            query: {
+                'library': library,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Get Transcript
+     * @returns TranscriptResponse Successful Response
+     * @throws ApiError
+     */
+    public static getTranscript({
+        revisionId,
+        library,
+    }: {
+        revisionId: string,
+        library: string,
+    }): CancelablePromise<TranscriptResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/transcripts/{revision_id}',
+            path: {
+                'revision_id': revisionId,
+            },
+            query: {
+                'library': library,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      *  Inspect Video
      * @returns JobAccepted Successful Response
      * @throws ApiError
@@ -262,6 +524,63 @@ export class DefaultService {
             url: '/api/v1/videos/inspect',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Prepare Transcript
+     * @returns JobAccepted Successful Response
+     * @throws ApiError
+     */
+    public static prepareTranscript({
+        bvid,
+        page,
+        requestBody,
+    }: {
+        bvid: string,
+        page: number,
+        requestBody: TranscriptPrepareRequest,
+    }): CancelablePromise<JobAccepted> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/videos/{bvid}/pages/{page}/transcripts',
+            path: {
+                'bvid': bvid,
+                'page': page,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     *  Get Video Workspace
+     * @returns VideoWorkspaceLookup Successful Response
+     * @throws ApiError
+     */
+    public static getVideoWorkspace({
+        bvid,
+        page,
+        library,
+    }: {
+        bvid: string,
+        page: number,
+        library: string,
+    }): CancelablePromise<VideoWorkspaceLookup> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/videos/{bvid}/pages/{page}/workspace',
+            path: {
+                'bvid': bvid,
+                'page': page,
+            },
+            query: {
+                'library': library,
+            },
             errors: {
                 422: `Validation Error`,
             },

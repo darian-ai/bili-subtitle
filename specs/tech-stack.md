@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 |---|---|
 | 文档性质 | 项目 Constitution：技术选择、目标架构和工程约束的唯一权威来源 |
-| 当前状态 | 阶段九 Local API 与 Chrome/Edge 扩展已完成验收；阶段十尚未开始 |
-| 最后更新 | 2026-08-25 |
+| 当前状态 | 阶段十学习助手 MVP 已完成并发布本地安装 `0.2.0`；阶段十一尚未开始 |
+| 最后更新 | 2026-08-27 |
 
 > 产品行为以 [`mission.md`](./mission.md) 为准。表中“计划采用”表示已经完成技术决策但尚无可交付实现，不得据此声称对应功能可用。
 
@@ -44,14 +44,14 @@
 | Python 测试 | pytest、respx、pytest-cov | 已实现并扩展 | 保持不低于 90% 的分支覆盖率 |
 | Python 质量 | Ruff、strict Pyright | 已实现并扩展 | 新 Python 代码继续遵守现有门禁 |
 | 扩展测试 | Vitest、Playwright | 已实现 | 状态/组件单测与模拟视频页端到端测试 |
-| Markdown | 标准 Markdown、YAML frontmatter、双链、Mermaid | 部分实现 | 已实现生成/个人 Markdown 分离和原子发布；Mermaid 属后续阶段 |
+| Markdown | 标准 Markdown、YAML frontmatter、双链、Mermaid | 已实现并扩展 | 生成/个人 Markdown 分离、原子发布及严格 Mermaid 渲染 |
 
 ## 三、目标架构
 
 ```text
 交互层
   ├── bili-subtitle 兼容 CLI（已实现）
-  ├── bili-study CLI（`extract|auth` 已实现，学习命令计划）
+  ├── bili-study CLI（字幕、认证、学习库、Provider、生成、配对与服务命令已实现）
   ├── loopback Local API（已实现）
   └── Chrome/Edge Side Panel（已实现）
           ↓
@@ -185,6 +185,7 @@ POST /api/v1/reflections
 - 使用 Manifest V3、WXT、TypeScript 和 React，首期只构建 Chrome/Edge 侧栏。
 - Content script 只读取受支持视频页的 URL、当前 P、HTML video 当前时间和播放跳转能力。
 - Side panel 显示连接/认证/任务状态、轨道选择、学习大纲、章节详情、引导问题、个人笔记和复述反馈。
+- 默认全局 panel 在运行时禁用；后台只为普通 Bilibili 视频配置带 `tabId` 的 panel，应用状态按 `tabId + library + BV/P` 隔离并以本地 workspace 为恢复真源。
 - Background/service worker 负责本地 API 通信和页面上下文转发，不保存模型或 Bilibili 凭据。
 - Bilibili SPA 导航后重新识别上下文；页面不受支持时清楚禁用学习操作。
 - 默认只跟随高亮当前章节，不自动暂停、不主动弹题、不在用户点击前发起模型请求。
@@ -253,7 +254,7 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 ### 真实人工验收
 
-- 在 Chrome 与 Edge 验证短视频、长视频、多 P、人工字幕、AI 字幕、多轨道和无字幕。
+- 在 Chrome 与 Edge 分别验证短/长视频、真正同 BV 多 P、当前选中的多 BV `video-pod` 项、人工/AI 字幕、多轨道和无字幕；不把集合项序号当作 P。
 - 验证服务启动、配对、模型配置、生成、按需详情、笔记恢复、复述反馈和时间戳跳转。
 - 人工记录只保留环境、命令形态、耗时范围和通过/失败结论，不记录标题、BV、账号、字幕、笔记、Prompt 或 Key。
 
@@ -281,6 +282,8 @@ SQLite 使用编号 migration、外键和事务。迁移前创建可验证备份
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-27 | 对齐阶段十验证策略：现有四次独立学习记录已足够，后续问题在实施与真实复验中持续闭环，不设第五次记录或预先冻结清单门禁。 |
+| 2026-08-27 | 阶段十技术验收完成：v4 SQLite、可恢复任务、成本/缓存、小测/总结/导图、渐进增强 DOM 来源判定、确定性双浏览器归档和 Windows CI 均通过；版本发布为 `0.2.0`。 |
 | 2026-08-25 | 阶段九完成技术验收：Local API、OpenAPI/client、持久 job、WXT/React 双浏览器构建、真实 Chrome/Edge 脱敏闭环及 Windows CI 全部通过。 |
 | 2026-08-24 | 阶段九工程接入 FastAPI/Uvicorn loopback 服务、Pydantic/OpenAPI、SQLite job、生成 TypeScript client，以及 WXT/React Chrome/Edge 双构建；真实浏览器验收与 CI 待完成。 |
 | 2026-08-24 | 阶段八技术验收完成：OpenAI-compatible DeepSeek 合成短/长字幕真实调用验证 Map/Reduce、完整证据覆盖和 usage；提示契约升级为 v2，SQLite 连接确定性释放，最终 Windows CI 全绿。 |
